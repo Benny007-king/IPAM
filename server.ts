@@ -9,6 +9,45 @@ import { authenticate as ldapAuthenticate } from 'ldap-authentication';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
 
+function syncIpsForSegment(segmentId: number, network: string, subnet_mask: string) {
+  try {
+    const ipToLong = (ip: string) => ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0;
+    const longToIp = (long: number) => [(long >>> 24) & 255, (long >>> 16) & 255, (long >>> 8) & 255, long & 255].join('.');
+    
+    const netLong = ipToLong(network);
+    const maskLong = ipToLong(subnet_mask);
+    const networkAddr = netLong & maskLong;
+    const broadcastAddr = networkAddr | (~maskLong >>> 0);
+    
+    const maxIps = Math.min(broadcastAddr - networkAddr - 1, 65534);
+    
+    const validIps = new Set<string>();
+    for (let i = 1; i <= maxIps; i++) {
+      validIps.add(longToIp(networkAddr + i));
+    }
+
+    const existingIps = db.prepare('SELECT id, ip_address FROM ips WHERE segment_id = ?').all(segmentId) as any[];
+    const existingIpSet = new Set(existingIps.map((ip: any) => ip.ip_address));
+
+    const ipsToDelete = existingIps.filter((ip: any) => !validIps.has(ip.ip_address));
+    const ipsToAdd = Array.from(validIps).filter(ip => !existingIpSet.has(ip));
+
+    db.transaction(() => {
+      const deleteStmt = db.prepare('DELETE FROM ips WHERE id = ?');
+      for (const ip of ipsToDelete) {
+        deleteStmt.run(ip.id);
+      }
+
+      const insertStmt = db.prepare('INSERT INTO ips (segment_id, ip_address, status) VALUES (?, ?, ?)');
+      for (const ip of ipsToAdd) {
+        insertStmt.run(segmentId, ip, 'unknown');
+      }
+    })();
+  } catch (e) {
+    console.error(`Failed to sync IPs for segment ${segmentId}:`, e);
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -77,7 +116,7 @@ async function startServer() {
           let user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
           if (!user) {
             const result = db.prepare('INSERT INTO users (username, role, is_local) VALUES (?, ?, ?)').run(username, 'readonly', 0);
-            user = { id: result.lastInsertRowid, username, role: 'readonly' };
+            user = { id: Number(result.lastInsertRowid), username, role: 'readonly' };
           }
 
           const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '1d' });
@@ -143,7 +182,12 @@ async function startServer() {
     const { name, network, subnet_mask, description } = req.body;
     try {
       const result = db.prepare('INSERT INTO segments (name, network, subnet_mask, description) VALUES (?, ?, ?, ?)').run(name, network, subnet_mask, description);
-      res.json({ id: result.lastInsertRowid, name, network, subnet_mask, description });
+      const segmentId = Number(result.lastInsertRowid);
+
+      // Auto-populate IPs
+      syncIpsForSegment(segmentId, network, subnet_mask);
+
+      res.json({ id: segmentId, name, network, subnet_mask, description });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -152,7 +196,11 @@ async function startServer() {
   app.put('/api/segments/:id', requireAuth, requireRole(['admin']), (req, res) => {
     const { name, network, subnet_mask, description } = req.body;
     try {
-      db.prepare('UPDATE segments SET name = ?, network = ?, subnet_mask = ?, description = ? WHERE id = ?').run(name, network, subnet_mask, description, req.params.id);
+      db.prepare('UPDATE segments SET name = ?, network = ?, subnet_mask = ?, description = ? WHERE id = ?').run(name, network, subnet_mask, description, Number(req.params.id));
+      
+      // Sync IPs
+      syncIpsForSegment(Number(req.params.id), network, subnet_mask);
+
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -160,24 +208,24 @@ async function startServer() {
   });
 
   app.delete('/api/segments/:id', requireAuth, requireRole(['admin']), (req, res) => {
-    db.prepare('DELETE FROM segments WHERE id = ?').run(req.params.id);
+    db.prepare('DELETE FROM segments WHERE id = ?').run(Number(req.params.id));
     res.json({ success: true });
   });
 
   // IPs API
   app.get('/api/segments/:segmentId/ips', requireAuth, (req, res) => {
-    const ips = db.prepare('SELECT * FROM ips WHERE segment_id = ?').all(req.params.segmentId);
+    const ips = db.prepare('SELECT * FROM ips WHERE segment_id = ?').all(Number(req.params.segmentId));
     res.json(ips);
   });
 
   app.post('/api/segments/:segmentId/ips', requireAuth, requireRole(['admin', 'editor']), (req: any, res) => {
     const { ip_address, hostname, os, description } = req.body;
-    const segmentId = req.params.segmentId;
+    const segmentId = Number(req.params.segmentId);
     try {
       const result = db.prepare('INSERT INTO ips (segment_id, ip_address, hostname, os, description, created_by) VALUES (?, ?, ?, ?, ?, ?)').run(
         segmentId, ip_address, hostname, os, description, req.user.id
       );
-      const newIp = db.prepare('SELECT * FROM ips WHERE id = ?').get(result.lastInsertRowid);
+      const newIp = db.prepare('SELECT * FROM ips WHERE id = ?').get(Number(result.lastInsertRowid));
       res.json(newIp);
     } catch (err: any) {
       if (err.message.includes('UNIQUE constraint failed')) {
@@ -189,23 +237,19 @@ async function startServer() {
   });
 
   app.put('/api/ips/:id', requireAuth, requireRole(['admin', 'editor']), (req, res) => {
-    const { ip_address, hostname, os, description } = req.body;
+    const { hostname, os, description } = req.body;
     try {
-      db.prepare('UPDATE ips SET ip_address = ?, hostname = ?, os = ?, description = ? WHERE id = ?').run(
-        ip_address, hostname, os, description, req.params.id
+      db.prepare('UPDATE ips SET hostname = ?, os = ?, description = ? WHERE id = ?').run(
+        hostname, os, description, Number(req.params.id)
       );
       res.json({ success: true });
     } catch (err: any) {
-      if (err.message.includes('UNIQUE constraint failed')) {
-        res.status(400).json({ error: 'IP address already exists in this segment' });
-      } else {
-        res.status(400).json({ error: err.message });
-      }
+      res.status(400).json({ error: err.message });
     }
   });
 
   app.delete('/api/ips/:id', requireAuth, requireRole(['admin', 'editor']), (req, res) => {
-    db.prepare('DELETE FROM ips WHERE id = ?').run(req.params.id);
+    db.prepare('DELETE FROM ips WHERE id = ?').run(Number(req.params.id));
     res.json({ success: true });
   });
 
@@ -223,11 +267,108 @@ async function startServer() {
 
   app.post('/api/notifications/:id/read', requireAuth, (req, res) => {
     try {
-      db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(req.params.id);
+      db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(Number(req.params.id));
       res.json({ success: true });
     } catch (err: any) {
       console.error('Error marking notification as read:', err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Settings API
+  app.get('/api/users', requireAuth, requireRole(['admin']), (req, res) => {
+    try {
+      const users = db.prepare('SELECT id, username, role, is_local FROM users').all();
+      res.json(users);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/users', requireAuth, requireRole(['admin']), (req, res) => {
+    const { username, password, role } = req.body;
+    try {
+      const hash = bcrypt.hashSync(password, 10);
+      const result = db.prepare('INSERT INTO users (username, password_hash, role, is_local) VALUES (?, ?, ?, ?)').run(username, hash, role, 1);
+      res.json({ id: Number(result.lastInsertRowid), username, role, is_local: 1 });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/users/:id', requireAuth, requireRole(['admin']), (req, res) => {
+    const { username, password, role } = req.body;
+    try {
+      if (password) {
+        const hash = bcrypt.hashSync(password, 10);
+        db.prepare('UPDATE users SET username = ?, password_hash = ?, role = ? WHERE id = ?').run(username, hash, role, Number(req.params.id));
+      } else {
+        db.prepare('UPDATE users SET username = ?, role = ? WHERE id = ?').run(username, role, Number(req.params.id));
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/users/:id', requireAuth, requireRole(['admin']), (req, res) => {
+    try {
+      db.prepare('DELETE FROM users WHERE id = ? AND username != ?').run(Number(req.params.id), 'admin');
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/ldap', requireAuth, requireRole(['admin']), (req, res) => {
+    try {
+      const settings = db.prepare('SELECT dc_addresses, port, service_account, password FROM ldap_settings WHERE id = 1').get();
+      res.json(settings || { dc_addresses: '', port: 389, service_account: '', password: '' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/ldap', requireAuth, requireRole(['admin']), (req, res) => {
+    const { dc_addresses, port, service_account, password } = req.body;
+    try {
+      db.prepare(`
+        INSERT INTO ldap_settings (id, dc_addresses, port, service_account, password) 
+        VALUES (1, ?, ?, ?, ?) 
+        ON CONFLICT(id) DO UPDATE SET 
+        dc_addresses=excluded.dc_addresses, port=excluded.port, service_account=excluded.service_account, password=excluded.password
+      `).run(dc_addresses, port, service_account, password);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/ad-groups', requireAuth, requireRole(['admin']), (req, res) => {
+    try {
+      const groups = db.prepare('SELECT * FROM ad_groups').all();
+      res.json(groups);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/ad-groups', requireAuth, requireRole(['admin']), (req, res) => {
+    const { group_name, role } = req.body;
+    try {
+      const result = db.prepare('INSERT INTO ad_groups (group_name, role) VALUES (?, ?)').run(group_name, role);
+      res.json({ id: Number(result.lastInsertRowid), group_name, role });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/ad-groups/:id', requireAuth, requireRole(['admin']), (req, res) => {
+    try {
+      db.prepare('DELETE FROM ad_groups WHERE id = ?').run(Number(req.params.id));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 

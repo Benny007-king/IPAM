@@ -49,6 +49,20 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (ip_id) REFERENCES ips(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS ldap_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    dc_addresses TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 389,
+    service_account TEXT NOT NULL,
+    password TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS ad_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_name TEXT UNIQUE NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('admin', 'editor', 'readonly'))
+  );
 `);
 
 // Create default local admin if it doesn't exist
