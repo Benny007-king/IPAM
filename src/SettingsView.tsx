@@ -1,24 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
-import { Trash2, Edit2, Plus } from 'lucide-react';
+import { Trash2, Edit2, Plus, CheckCircle, XCircle } from 'lucide-react';
 
 export function SettingsView() {
   const [users, setUsers] = useState<any[]>([]);
-  const [ldapSettings, setLdapSettings] = useState({ dc_addresses: '', port: 389, service_account: '', password: '' });
+  const [ldapServers, setLdapServers] = useState<any[]>([]);
   const [adGroups, setAdGroups] = useState<any[]>([]);
   
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'readonly' });
   const [newAdGroup, setNewAdGroup] = useState({ group_name: '', role: 'readonly' });
+  const [newLdapServer, setNewLdapServer] = useState({ server_name: '', dc_addresses: '', port: 389, service_account: '', password: '' });
   
   const [editingUser, setEditingUser] = useState<any>(null);
+  const [editingAdGroup, setEditingAdGroup] = useState<any>(null);
+  const [editingLdapServer, setEditingLdapServer] = useState<any>(null);
   
-  const [confirmDelete, setConfirmDelete] = useState<{type: 'user' | 'adGroup', id: number} | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{type: 'user' | 'adGroup' | 'ldapServer', id: number} | null>(null);
   const [alertMsg, setAlertMsg] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{success: boolean, message: string} | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
 
   useEffect(() => {
     fetchUsers();
-    fetchLdapSettings();
+    fetchLdapServers();
     fetchAdGroups();
   }, []);
 
@@ -27,9 +32,9 @@ export function SettingsView() {
     if (res.ok) setUsers(await res.json());
   };
 
-  const fetchLdapSettings = async () => {
+  const fetchLdapServers = async () => {
     const res = await fetch('/api/ldap');
-    if (res.ok) setLdapSettings(await res.json());
+    if (res.ok) setLdapServers(await res.json());
   };
 
   const fetchAdGroups = async () => {
@@ -39,12 +44,45 @@ export function SettingsView() {
 
   const handleSaveLdap = async (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/ldap', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ldapSettings)
-    });
-    setAlertMsg('LDAP Settings saved');
+    if (editingLdapServer) {
+      await fetch(`/api/ldap/${editingLdapServer.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLdapServer)
+      });
+      setEditingLdapServer(null);
+    } else {
+      await fetch('/api/ldap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLdapServer)
+      });
+    }
+    setNewLdapServer({ server_name: '', dc_addresses: '', port: 389, service_account: '', password: '' });
+    fetchLdapServers();
+    setTestResult(null);
+  };
+
+  const handleTestLdapConnection = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/ldap/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLdapServer)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTestResult({ success: true, message: data.message });
+      } else {
+        setTestResult({ success: false, message: data.error });
+      }
+    } catch (err: any) {
+      setTestResult({ success: false, message: 'Network error occurred' });
+    } finally {
+      setIsTesting(false);
+    }
   };
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -79,23 +117,39 @@ export function SettingsView() {
     } else if (confirmDelete.type === 'adGroup') {
       await fetch(`/api/ad-groups/${confirmDelete.id}`, { method: 'DELETE' });
       fetchAdGroups();
+    } else if (confirmDelete.type === 'ldapServer') {
+      await fetch(`/api/ldap/${confirmDelete.id}`, { method: 'DELETE' });
+      fetchLdapServers();
     }
     setConfirmDelete(null);
   };
 
   const handleAddAdGroup = async (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/ad-groups', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newAdGroup)
-    });
+    if (editingAdGroup) {
+      await fetch(`/api/ad-groups/${editingAdGroup.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newAdGroup)
+      });
+      setEditingAdGroup(null);
+    } else {
+      await fetch('/api/ad-groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newAdGroup)
+      });
+    }
     setNewAdGroup({ group_name: '', role: 'readonly' });
     fetchAdGroups();
   };
 
   const handleDeleteAdGroup = async (id: number) => {
     setConfirmDelete({ type: 'adGroup', id });
+  };
+
+  const handleDeleteLdapServer = async (id: number) => {
+    setConfirmDelete({ type: 'ldapServer', id });
   };
 
   return (
@@ -126,29 +180,77 @@ export function SettingsView() {
       {/* LDAP Settings */}
       <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
         <h2 className="text-xl font-semibold mb-4">LDAP Configuration</h2>
-        <form onSubmit={handleSaveLdap} className="space-y-4">
+        <form onSubmit={handleSaveLdap} className="space-y-4 mb-8">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Server Name</label>
+              <Input value={newLdapServer.server_name} onChange={e => setNewLdapServer({...newLdapServer, server_name: e.target.value})} placeholder="e.g. Primary LDAP" required />
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">DC Addresses (comma separated)</label>
-              <Input value={ldapSettings.dc_addresses} onChange={e => setLdapSettings({...ldapSettings, dc_addresses: e.target.value})} placeholder="e.g. 192.168.1.10, 192.168.1.11" />
+              <Input value={newLdapServer.dc_addresses} onChange={e => setNewLdapServer({...newLdapServer, dc_addresses: e.target.value})} placeholder="e.g. 192.168.1.10, 192.168.1.11" required />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
-              <Input type="number" value={ldapSettings.port} onChange={e => setLdapSettings({...ldapSettings, port: parseInt(e.target.value)})} placeholder="389" />
+              <Input type="number" value={newLdapServer.port} onChange={e => setNewLdapServer({...newLdapServer, port: parseInt(e.target.value)})} placeholder="389" required />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Service Account Username</label>
-              <Input value={ldapSettings.service_account} onChange={e => setLdapSettings({...ldapSettings, service_account: e.target.value})} placeholder="e.g. DOMAIN\\admin" />
+              <Input value={newLdapServer.service_account} onChange={e => setNewLdapServer({...newLdapServer, service_account: e.target.value})} placeholder="e.g. DOMAIN\admin" required />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Service Account Password</label>
-              <Input type="password" value={ldapSettings.password} onChange={e => setLdapSettings({...ldapSettings, password: e.target.value})} />
+              <Input type="password" value={newLdapServer.password} onChange={e => setNewLdapServer({...newLdapServer, password: e.target.value})} required={!editingLdapServer} placeholder={editingLdapServer ? "Leave blank to keep unchanged" : ""} />
             </div>
           </div>
-          <div className="flex justify-end">
-            <Button type="submit">Save LDAP Settings</Button>
+          
+          {testResult && (
+            <div className={`p-3 rounded-md flex items-center text-sm ${testResult.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              {testResult.success ? <CheckCircle className="w-4 h-4 mr-2" /> : <XCircle className="w-4 h-4 mr-2" />}
+              {testResult.message}
+            </div>
+          )}
+
+          <div className="flex justify-end space-x-3">
+            <Button type="button" variant="outline" onClick={handleTestLdapConnection} disabled={isTesting || !newLdapServer.dc_addresses || !newLdapServer.service_account}>
+              {isTesting ? 'Testing...' : 'Test Connection'}
+            </Button>
+            {editingLdapServer && (
+              <Button type="button" variant="outline" onClick={() => { setEditingLdapServer(null); setNewLdapServer({ server_name: '', dc_addresses: '', port: 389, service_account: '', password: '' }); setTestResult(null); }}>
+                Cancel
+              </Button>
+            )}
+            <Button type="submit">{editingLdapServer ? 'Update Server' : 'Add Server'}</Button>
           </div>
         </form>
+
+        {ldapServers.length > 0 && (
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Server Name</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">DC Addresses</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Port</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {ldapServers.map(server => (
+                <tr key={server.id}>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{server.server_name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{server.dc_addresses}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{server.port}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <div className="flex justify-end space-x-3">
+                      <button onClick={() => { setEditingLdapServer(server); setNewLdapServer({ server_name: server.server_name, dc_addresses: server.dc_addresses, port: server.port, service_account: server.service_account, password: '' }); setTestResult(null); }} className="text-indigo-600 hover:text-indigo-900"><Edit2 className="h-4 w-4" /></button>
+                      <button onClick={() => handleDeleteLdapServer(server.id)} className="text-red-600 hover:text-red-900"><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* AD Groups */}
@@ -161,7 +263,8 @@ export function SettingsView() {
             <option value="editor">Editor</option>
             <option value="admin">Admin</option>
           </select>
-          <Button type="submit"><Plus className="h-4 w-4 mr-2" /> Add Group</Button>
+          <Button type="submit">{editingAdGroup ? 'Update Group' : <><Plus className="h-4 w-4 mr-2" /> Add Group</>}</Button>
+          {editingAdGroup && <Button type="button" variant="outline" onClick={() => { setEditingAdGroup(null); setNewAdGroup({ group_name: '', role: 'readonly' }); }}>Cancel</Button>}
         </form>
         
         <table className="min-w-full divide-y divide-gray-200">
@@ -178,7 +281,10 @@ export function SettingsView() {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{group.group_name}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">{group.role}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <button onClick={() => handleDeleteAdGroup(group.id)} className="text-red-600 hover:text-red-900"><Trash2 className="h-4 w-4" /></button>
+                  <div className="flex justify-end space-x-3">
+                    <button onClick={() => { setEditingAdGroup(group); setNewAdGroup({ group_name: group.group_name, role: group.role }); }} className="text-indigo-600 hover:text-indigo-900"><Edit2 className="h-4 w-4" /></button>
+                    <button onClick={() => handleDeleteAdGroup(group.id)} className="text-red-600 hover:text-red-900"><Trash2 className="h-4 w-4" /></button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -230,3 +336,4 @@ export function SettingsView() {
     </div>
   );
 }
+

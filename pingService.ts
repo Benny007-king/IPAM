@@ -10,13 +10,20 @@ export function startPingService() {
     isRunning = true;
 
     try {
-      const ips = db.prepare('SELECT id, ip_address, hostname, last_seen, status FROM ips').all() as any[];
       const chunkSize = 50;
+      let offset = 0;
       
-      for (let i = 0; i < ips.length; i += chunkSize) {
-        const chunk = ips.slice(i, i + chunkSize);
+      const updateOnline = db.prepare('UPDATE ips SET status = ?, last_seen = ? WHERE id = ?');
+      const updateOffline = db.prepare('UPDATE ips SET status = ? WHERE id = ?');
+      const insertNotif = db.prepare('INSERT INTO notifications (ip_id, message, type) VALUES (?, ?, ?)');
+      const checkNotif7Days = db.prepare(`SELECT id FROM notifications WHERE ip_id = ? AND type = '7_days'`);
+      const checkNotif24Hours = db.prepare(`SELECT id FROM notifications WHERE ip_id = ? AND type = '24_hours' AND created_at > datetime('now', '-1 day')`);
+
+      while (true) {
+        const chunk = db.prepare('SELECT id, ip_address, hostname, last_seen, status FROM ips LIMIT ? OFFSET ?').all(chunkSize, offset) as any[];
+        if (chunk.length === 0) break;
         
-        await Promise.all(chunk.map(async (ip) => {
+        const results = await Promise.all(chunk.map(async (ip) => {
           try {
             let isAlive = false;
             try {
@@ -34,13 +41,24 @@ export function startPingService() {
                 // ignore
               }
             }
+            return { ip, isAlive };
+          } catch (error) {
+            console.error(`Failed to ping ${ip.ip_address}:`, error);
+            return { ip, isAlive: false, error: true };
+          }
+        }));
 
-            const now = new Date().toISOString();
+        // Process DB updates for this chunk synchronously in a transaction
+        db.transaction(() => {
+          const now = new Date().toISOString();
+          
+          for (const { ip, isAlive, error } of results) {
+            if (error) continue;
 
             if (isAlive) {
-              db.prepare('UPDATE ips SET status = ?, last_seen = ? WHERE id = ?').run('online', now, ip.id);
+              updateOnline.run('online', now, ip.id);
             } else {
-              db.prepare('UPDATE ips SET status = ? WHERE id = ?').run('offline', ip.id);
+              updateOffline.run('offline', ip.id);
 
               if (ip.last_seen) {
                 const lastSeenDate = new Date(ip.last_seen);
@@ -48,38 +66,22 @@ export function startPingService() {
                 const daysOffline = differenceInDays(new Date(), lastSeenDate);
 
                 if (daysOffline >= 7) {
-                  const existingNotif = db.prepare(`
-                    SELECT id FROM notifications 
-                    WHERE ip_id = ? AND type = '7_days'
-                  `).get(ip.id);
-
+                  const existingNotif = checkNotif7Days.get(ip.id);
                   if (!existingNotif) {
-                    db.prepare('INSERT INTO notifications (ip_id, message, type) VALUES (?, ?, ?)').run(
-                      ip.id,
-                      `IP ${ip.ip_address} has not responded for 7 days. Recommendation: Delete this IP.`,
-                      '7_days'
-                    );
+                    insertNotif.run(ip.id, `IP ${ip.ip_address} has not responded for 7 days. Recommendation: Delete this IP.`, '7_days');
                   }
                 } else if (hoursOffline >= 24) {
-                  const recentNotif = db.prepare(`
-                    SELECT id FROM notifications 
-                    WHERE ip_id = ? AND type = '24_hours' AND created_at > datetime('now', '-1 day')
-                  `).get(ip.id);
-
+                  const recentNotif = checkNotif24Hours.get(ip.id);
                   if (!recentNotif) {
-                    db.prepare('INSERT INTO notifications (ip_id, message, type) VALUES (?, ?, ?)').run(
-                      ip.id,
-                      `IP ${ip.ip_address} has not responded for 24 hours.`,
-                      '24_hours'
-                    );
+                    insertNotif.run(ip.id, `IP ${ip.ip_address} has not responded for 24 hours.`, '24_hours');
                   }
                 }
               }
             }
-          } catch (error) {
-            console.error(`Failed to ping ${ip.ip_address}:`, error);
           }
-        }));
+        })();
+        
+        offset += chunkSize;
       }
     } finally {
       isRunning = false;

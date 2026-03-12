@@ -607,6 +607,8 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
   const [editingIp, setEditingIp] = useState<IP | null>(null);
   const [newIp, setNewIp] = useState({ ip_address: '', hostname: '', os: '', description: '' });
   const [error, setError] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 100;
 
   useEffect(() => {
     fetchIps();
@@ -627,17 +629,7 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
       })
       .then(data => {
         if (Array.isArray(data)) {
-          const sortedIps = [...data].sort((a, b) => {
-            const numA = a.ip_address.split('.').map(Number);
-            const numB = b.ip_address.split('.').map(Number);
-            for (let i = 0; i < 4; i++) {
-              if (numA[i] !== numB[i]) {
-                return numA[i] - numB[i];
-              }
-            }
-            return 0;
-          });
-          setIps(sortedIps);
+          setIps(data);
         } else {
           console.error('Expected array of IPs, got:', data);
           setIps([]);
@@ -716,6 +708,9 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
   };
 
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
+  
+  const totalPages = Math.ceil(ips.length / itemsPerPage);
+  const displayedIps = ips.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <div className="space-y-6">
@@ -733,21 +728,35 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
       </div>
 
       {showAdd && (
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h3 className="text-md font-medium mb-4">{editingIp ? 'Edit IP Address' : 'New IP Address'}</h3>
-          {error && <div className="text-red-500 text-sm mb-4">{error}</div>}
-          <form onSubmit={handleAddIp} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Input placeholder="IP Address (e.g. 192.168.1.10)" required value={newIp.ip_address} onChange={e => setNewIp({...newIp, ip_address: e.target.value})} disabled={!!editingIp} />
-              <Input placeholder="Hostname" value={newIp.hostname} onChange={e => setNewIp({...newIp, hostname: e.target.value})} />
-              <Input placeholder="OS (e.g. Windows, Linux)" value={newIp.os} onChange={e => setNewIp({...newIp, os: e.target.value})} />
-              <Input placeholder="Description" value={newIp.description} onChange={e => setNewIp({...newIp, description: e.target.value})} />
-            </div>
-            <div className="flex justify-end space-x-2">
-              <Button type="button" variant="outline" onClick={handleCancelAddIp}>Cancel</Button>
-              <Button type="submit">{editingIp ? 'Update IP' : 'Save IP'}</Button>
-            </div>
-          </form>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-2xl w-full">
+            <h3 className="text-lg font-medium mb-4">{editingIp ? 'Edit IP Address' : 'New IP Address'}</h3>
+            {error && <div className="text-red-500 text-sm mb-4">{error}</div>}
+            <form onSubmit={handleAddIp} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">IP Address</label>
+                  <Input placeholder="e.g. 192.168.1.10" required value={newIp.ip_address} onChange={e => setNewIp({...newIp, ip_address: e.target.value})} disabled={!!editingIp} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Hostname</label>
+                  <Input placeholder="Hostname" value={newIp.hostname} onChange={e => setNewIp({...newIp, hostname: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">OS</label>
+                  <Input placeholder="e.g. Windows, Linux" value={newIp.os} onChange={e => setNewIp({...newIp, os: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <Input placeholder="Description" value={newIp.description} onChange={e => setNewIp({...newIp, description: e.target.value})} />
+                </div>
+              </div>
+              <div className="flex justify-end space-x-3 mt-6">
+                <Button type="button" variant="outline" onClick={handleCancelAddIp}>Cancel</Button>
+                <Button type="submit">{editingIp ? 'Update IP' : 'Save IP'}</Button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -765,7 +774,7 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {ips.map((ip) => (
+            {displayedIps.map((ip) => (
               <tr key={ip.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -808,6 +817,39 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
             )}
           </tbody>
         </table>
+        
+        {totalPages > 1 && (
+          <div className="bg-white px-4 py-3 border-t border-gray-200 flex items-center justify-between sm:px-6">
+            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm text-gray-700">
+                  Showing <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> to <span className="font-medium">{Math.min(currentPage * itemsPerPage, ips.length)}</span> of <span className="font-medium">{ips.length}</span> results
+                </p>
+              </div>
+              <div>
+                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </nav>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

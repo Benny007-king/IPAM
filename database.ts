@@ -3,8 +3,9 @@ import bcrypt from 'bcryptjs';
 
 const db = new Database('ipam.db');
 
-// Enable foreign keys
+// Enable foreign keys and WAL mode for better concurrency
 db.pragma('foreign_keys = ON');
+db.pragma('journal_mode = WAL');
 
 // Create tables
 db.exec(`
@@ -28,6 +29,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     segment_id INTEGER NOT NULL,
     ip_address TEXT NOT NULL,
+    ip_long INTEGER,
     hostname TEXT,
     os TEXT,
     description TEXT,
@@ -39,7 +41,31 @@ db.exec(`
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE(segment_id, ip_address)
   );
+`);
 
+try {
+  db.exec('ALTER TABLE ips ADD COLUMN ip_long INTEGER;');
+} catch (e) {
+  // Column might already exist
+}
+
+// Helper to update existing ips with ip_long
+try {
+  const ips = db.prepare('SELECT id, ip_address FROM ips WHERE ip_long IS NULL').all() as any[];
+  if (ips.length > 0) {
+    const updateStmt = db.prepare('UPDATE ips SET ip_long = ? WHERE id = ?');
+    db.transaction(() => {
+      for (const ip of ips) {
+        const ipToLong = (ipStr: string) => ipStr.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0;
+        updateStmt.run(ipToLong(ip.ip_address), ip.id);
+      }
+    })();
+  }
+} catch (e) {
+  // Ignore
+}
+
+db.exec(`
   CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ip_id INTEGER NOT NULL,
@@ -50,8 +76,9 @@ db.exec(`
     FOREIGN KEY (ip_id) REFERENCES ips(id) ON DELETE CASCADE
   );
 
-  CREATE TABLE IF NOT EXISTS ldap_settings (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
+  CREATE TABLE IF NOT EXISTS ldap_servers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_name TEXT NOT NULL,
     dc_addresses TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 389,
     service_account TEXT NOT NULL,
@@ -64,6 +91,21 @@ db.exec(`
     role TEXT NOT NULL CHECK(role IN ('admin', 'editor', 'readonly'))
   );
 `);
+
+// Migrate data from ldap_settings to ldap_servers if ldap_servers is empty
+try {
+  const existingServers = db.prepare('SELECT COUNT(*) as count FROM ldap_servers').get() as { count: number };
+  if (existingServers.count === 0) {
+    const oldSettings = db.prepare('SELECT * FROM ldap_settings WHERE id = 1').get() as any;
+    if (oldSettings) {
+      db.prepare('INSERT INTO ldap_servers (server_name, dc_addresses, port, service_account, password) VALUES (?, ?, ?, ?, ?)').run(
+        'Primary LDAP', oldSettings.dc_addresses, oldSettings.port, oldSettings.service_account, oldSettings.password
+      );
+    }
+  }
+} catch (e) {
+  // Ignore if ldap_settings doesn't exist
+}
 
 // Create default local admin if it doesn't exist
 const adminExists = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
