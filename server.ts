@@ -560,6 +560,15 @@ async function startServer() {
     }
   });
 
+  app.post('/api/ips/:id/mute', requireAuth, (req, res) => {
+    try {
+      db.prepare('UPDATE ips SET mute_notifications = 1 WHERE id = ?').run(Number(req.params.id));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

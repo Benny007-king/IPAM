@@ -1,6 +1,6 @@
 import ping from 'ping';
 import db from './database.js';
-import { differenceInHours, differenceInDays } from 'date-fns';
+import { differenceInHours, differenceInDays, differenceInMinutes } from 'date-fns';
 
 export function startPingService() {
   let isRunning = false;
@@ -13,14 +13,14 @@ export function startPingService() {
       const chunkSize = 50;
       let offset = 0;
       
-      const updateOnline = db.prepare('UPDATE ips SET status = ?, last_seen = ? WHERE id = ?');
+      const updateOnline = db.prepare('UPDATE ips SET status = ?, last_seen = ?, offline_since = NULL, notification_count = 0 WHERE id = ?');
       const updateOffline = db.prepare('UPDATE ips SET status = ? WHERE id = ?');
+      const setOfflineSince = db.prepare('UPDATE ips SET offline_since = ?, notification_count = 0 WHERE id = ?');
+      const updateNotifCount = db.prepare('UPDATE ips SET notification_count = ? WHERE id = ?');
       const insertNotif = db.prepare('INSERT INTO notifications (ip_id, message, type) VALUES (?, ?, ?)');
-      const checkNotif7Days = db.prepare(`SELECT id FROM notifications WHERE ip_id = ? AND type = '7_days'`);
-      const checkNotif24Hours = db.prepare(`SELECT id FROM notifications WHERE ip_id = ? AND type = '24_hours' AND created_at > datetime('now', '-1 day')`);
 
       while (true) {
-        const chunk = db.prepare('SELECT id, ip_address, hostname, last_seen, status FROM ips LIMIT ? OFFSET ?').all(chunkSize, offset) as any[];
+        const chunk = db.prepare('SELECT id, ip_address, hostname, last_seen, status, offline_since, notification_count, mute_notifications FROM ips LIMIT ? OFFSET ?').all(chunkSize, offset) as any[];
         if (chunk.length === 0) break;
         
         const results = await Promise.all(chunk.map(async (ip) => {
@@ -50,30 +50,39 @@ export function startPingService() {
 
         // Process DB updates for this chunk synchronously in a transaction
         db.transaction(() => {
-          const now = new Date().toISOString();
+          const now = new Date();
+          const nowIso = now.toISOString();
           
           for (const { ip, isAlive, error } of results) {
             if (error) continue;
 
             if (isAlive) {
-              updateOnline.run('online', now, ip.id);
+              updateOnline.run('online', nowIso, ip.id);
             } else {
               updateOffline.run('offline', ip.id);
 
-              if (ip.last_seen) {
-                const lastSeenDate = new Date(ip.last_seen);
-                const hoursOffline = differenceInHours(new Date(), lastSeenDate);
-                const daysOffline = differenceInDays(new Date(), lastSeenDate);
+              if (ip.status === 'online') {
+                // Just went offline
+                setOfflineSince.run(nowIso, ip.id);
+              } else if (ip.offline_since && !ip.mute_notifications) {
+                const offlineDate = new Date(ip.offline_since);
+                const minsOffline = differenceInMinutes(now, offlineDate);
+                const hoursOffline = differenceInHours(now, offlineDate);
+                const notifCount = ip.notification_count || 0;
 
-                if (daysOffline >= 7) {
-                  const existingNotif = checkNotif7Days.get(ip.id);
-                  if (!existingNotif) {
-                    insertNotif.run(ip.id, `IP ${ip.ip_address} has not responded for 7 days. Recommendation: Delete this IP.`, '7_days');
-                  }
-                } else if (hoursOffline >= 24) {
-                  const recentNotif = checkNotif24Hours.get(ip.id);
-                  if (!recentNotif) {
-                    insertNotif.run(ip.id, `IP ${ip.ip_address} has not responded for 24 hours.`, '24_hours');
+                if (notifCount === 0 && minsOffline >= 5) {
+                  insertNotif.run(ip.id, `IP ${ip.ip_address} has been offline for 5 minutes.`, 'offline_alert');
+                  updateNotifCount.run(1, ip.id);
+                } else if (notifCount >= 1 && notifCount < 7) {
+                  // Next alert after 24 hours since the last threshold
+                  // 1st notif = 5 mins
+                  // 2nd notif = 24 hours
+                  // 3rd notif = 48 hours
+                  // ...
+                  const requiredHours = notifCount * 24;
+                  if (hoursOffline >= requiredHours) {
+                    insertNotif.run(ip.id, `IP ${ip.ip_address} has been offline for ${requiredHours} hours.`, 'offline_alert');
+                    updateNotifCount.run(notifCount + 1, ip.id);
                   }
                 }
               }

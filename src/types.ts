@@ -29,7 +29,7 @@ export interface Notification {
   id: number;
   ip_id: number;
   message: string;
-  type: '24_hours' | '7_days';
+  type: '24_hours' | '7_days' | 'offline_alert';
   is_read: boolean;
   created_at: string;
 }
