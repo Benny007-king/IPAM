@@ -164,8 +164,11 @@ function GlobalSearch() {
     return () => clearTimeout(delayDebounceFn);
   }, [query]);
 
-  const handleSelectSegment = (segmentId: number) => {
-    window.dispatchEvent(new CustomEvent('navigate-segment', { detail: { segmentId } }));
+  const handleSelectSegment = (segmentId: number, ipId?: number) => {
+    window.dispatchEvent(new CustomEvent('change-view', { detail: { view: 'segments' } }));
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('navigate-segment', { detail: { segmentId, ipId } }));
+    }, 100);
     setIsOpen(false);
     setQuery('');
   };
@@ -211,10 +214,10 @@ function GlobalSearch() {
             <div className="p-2 border-t border-gray-100">
               <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-2">IP Addresses</h3>
               {results.ips.map(ip => (
-                <div
+                  <div
                   key={`ip-${ip.id}`}
                   className="px-2 py-2 hover:bg-indigo-50 cursor-pointer rounded-md"
-                  onClick={() => handleSelectSegment(ip.segment_id)}
+                  onClick={() => handleSelectSegment(ip.segment_id, ip.id)}
                 >
                   <div className="flex justify-between items-center">
                     <div className="text-sm font-medium text-gray-900">{ip.ip_address}</div>
@@ -275,6 +278,11 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
   const markAsRead = async (id: number) => {
     await fetch(`/api/notifications/${id}/read`, { method: 'POST' });
     setNotifications(notifications.map(n => n.id === id ? { ...n, is_read: true } : n));
+  };
+
+  const muteIp = async (ipId: number, notifId: number) => {
+    await fetch(`/api/ips/${ipId}/mute`, { method: 'POST' });
+    markAsRead(notifId);
   };
 
   return (
@@ -348,9 +356,14 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
                           </div>
                         </div>
                         {!n.is_read && (
-                          <button onClick={() => markAsRead(n.id)} className="text-xs text-indigo-600 mt-2 hover:underline">
-                            Mark as read
-                          </button>
+                          <div className="flex space-x-3 mt-2">
+                            <button onClick={() => markAsRead(n.id)} className="text-xs text-indigo-600 hover:underline cursor-pointer">
+                              Mark as read
+                            </button>
+                            <button onClick={() => muteIp(n.ip_id, n.id)} className="text-xs text-red-600 hover:underline cursor-pointer">
+                              Mute IP
+                            </button>
+                          </div>
                         )}
                       </div>
                     ))
@@ -375,6 +388,7 @@ function SegmentsView() {
   const { user } = useContext(AuthContext);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [selectedSegment, setSelectedSegment] = useState<Segment | null>(null);
+  const [targetIpId, setTargetIpId] = useState<number | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [editingSegment, setEditingSegment] = useState<Segment | null>(null);
   const [segmentToDelete, setSegmentToDelete] = useState<Segment | null>(null);
@@ -388,6 +402,9 @@ function SegmentsView() {
   useEffect(() => {
     const handleNavigate = (e: any) => {
       const segId = e.detail.segmentId;
+      const ipId = e.detail.ipId;
+      setTargetIpId(ipId || null);
+      
       const seg = segments.find(s => s.id === segId);
       if (seg) {
         setSelectedSegment(seg);
@@ -505,7 +522,7 @@ function SegmentsView() {
   };
 
   if (selectedSegment) {
-    return <IPsView segment={selectedSegment} onBack={() => setSelectedSegment(null)} />;
+    return <IPsView segment={selectedSegment} onBack={() => { setSelectedSegment(null); setTargetIpId(null); }} targetIpId={targetIpId} />;
   }
 
   return (
@@ -600,7 +617,7 @@ function SegmentsView() {
 }
 
 // IPs View
-function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) {
+function IPsView({ segment, onBack, targetIpId }: { segment: Segment, onBack: () => void, targetIpId?: number | null }) {
   const { user } = useContext(AuthContext);
   const [ips, setIps] = useState<IP[]>([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -615,6 +632,22 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
     const interval = setInterval(fetchIps, 30000); // Refresh every 30s
     return () => clearInterval(interval);
   }, [segment.id]);
+
+  useEffect(() => {
+    if (targetIpId && ips.length > 0) {
+      const index = ips.findIndex(ip => ip.id === targetIpId);
+      if (index !== -1) {
+        const page = Math.floor(index / itemsPerPage) + 1;
+        setCurrentPage(page);
+        setTimeout(() => {
+          const el = document.getElementById(`ip-row-${targetIpId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
+      }
+    }
+  }, [targetIpId, ips]);
 
   const fetchIps = () => {
     fetch(`/api/segments/${segment.id}/ips`)
@@ -725,6 +758,50 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
           <h2 className="text-2xl font-bold text-gray-900">{segment.name}</h2>
           <p className="text-sm text-gray-500 font-mono mt-1">{segment.network} / {segment.subnet_mask}</p>
         </div>
+        <div className="flex space-x-3">
+          <Button className="cursor-pointer" onClick={() => {
+            import('xlsx').then(XLSX => {
+              const ws = XLSX.utils.json_to_sheet(ips.map(ip => ({
+                'IP Address': ip.ip_address,
+                'Hostname': ip.hostname || '',
+                'OS': ip.os || '',
+                'Status': ip.status,
+                'Description': ip.description || '',
+                'Last Seen': ip.last_seen ? new Date(ip.last_seen).toLocaleString() : 'Never'
+              })));
+              const wb = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(wb, ws, "IPs");
+              XLSX.writeFile(wb, `${segment.name}_IPs.xlsx`);
+            });
+          }}>
+            Export XLSX
+          </Button>
+          <Button className="cursor-pointer" onClick={() => {
+            Promise.all([
+              import('jspdf'),
+              import('jspdf-autotable')
+            ]).then(([jsPDF, autoTable]) => {
+              const doc = new jsPDF.default();
+              doc.text(`IPs for Segment: ${segment.name}`, 14, 15);
+              autoTable.default(doc, {
+                head: [['IP Address', 'Hostname', 'OS', 'Status', 'Description', 'Last Seen']],
+                body: ips.map(ip => [
+                  ip.ip_address,
+                  ip.hostname || '',
+                  ip.os || '',
+                  ip.status,
+                  ip.description || '',
+                  ip.last_seen ? new Date(ip.last_seen).toLocaleString() : 'Never'
+                ]),
+                startY: 20,
+                styles: { fontSize: 8 }
+              });
+              doc.save(`${segment.name}_IPs.pdf`);
+            });
+          }}>
+            Export PDF
+          </Button>
+        </div>
       </div>
 
       {showAdd && (
@@ -775,7 +852,11 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {displayedIps.map((ip) => (
-              <tr key={ip.id} className="hover:bg-gray-50">
+              <tr 
+                key={ip.id} 
+                id={`ip-row-${ip.id}`}
+                className={`hover:bg-gray-50 transition-colors duration-500 ${targetIpId === ip.id ? 'bg-indigo-100' : ''}`}
+              >
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                     ip.status === 'online' ? 'bg-green-100 text-green-800' : 
@@ -857,6 +938,14 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
 
 export default function App() {
   const [currentView, setCurrentView] = useState('segments');
+
+  useEffect(() => {
+    const handleChangeView = (e: any) => {
+      setCurrentView(e.detail.view);
+    };
+    window.addEventListener('change-view', handleChangeView);
+    return () => window.removeEventListener('change-view', handleChangeView);
+  }, []);
 
   return (
     <AuthProvider>

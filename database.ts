@@ -121,6 +121,15 @@ try {
   if (!hasOs) {
     db.exec('ALTER TABLE ips ADD COLUMN os TEXT');
   }
+  if (!tableInfo.some(col => col.name === 'offline_since')) {
+    db.exec('ALTER TABLE ips ADD COLUMN offline_since DATETIME');
+  }
+  if (!tableInfo.some(col => col.name === 'notification_count')) {
+    db.exec('ALTER TABLE ips ADD COLUMN notification_count INTEGER DEFAULT 0');
+  }
+  if (!tableInfo.some(col => col.name === 'mute_notifications')) {
+    db.exec('ALTER TABLE ips ADD COLUMN mute_notifications BOOLEAN DEFAULT 0');
+  }
 } catch (e) {
   console.error('Migration error for ips:', e);
 }
