@@ -2,7 +2,7 @@ import React, { useState, useEffect, createContext, useContext } from 'react';
 import { User, Segment, IP, Notification } from './types';
 import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
-import { Activity, Bell, LogOut, Network, Plus, Server, Trash2, Users, AlertTriangle, Edit2, X } from 'lucide-react';
+import { Activity, Bell, LogOut, Network, Plus, Server, Trash2, Users, AlertTriangle, Edit2, X, Settings } from 'lucide-react';
 
 // Auth Context
 const AuthContext = createContext<{
@@ -235,7 +235,7 @@ function GlobalSearch() {
 }
 
 // Dashboard Layout
-function Dashboard({ children }: { children: React.ReactNode }) {
+function Dashboard({ children, currentView, onNavigate }: { children: React.ReactNode, currentView: string, onNavigate: (view: string) => void }) {
   const { user, logout } = useContext(AuthContext);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
@@ -286,12 +286,16 @@ function Dashboard({ children }: { children: React.ReactNode }) {
           <span className="text-lg font-bold">IPAM System</span>
         </div>
         <nav className="flex-1 px-4 py-6 space-y-2">
-          <a href="#" className="flex items-center px-2 py-2 text-sm font-medium rounded-md bg-slate-800 text-white">
+          <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('segments'); }} className={`flex items-center px-2 py-2 text-sm font-medium rounded-md ${currentView === 'segments' ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
             <Server className="mr-3 h-5 w-5 text-slate-400" />
             Segments
           </a>
         </nav>
         <div className="p-4 border-t border-slate-800">
+          <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('settings'); }} className={`flex items-center px-2 py-2 mb-4 text-sm font-medium rounded-md ${currentView === 'settings' ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+            <Settings className="mr-3 h-5 w-5 text-slate-400" />
+            Settings
+          </a>
           <div className="flex items-center">
             <div className="ml-3">
               <p className="text-sm font-medium text-white">{user?.username}</p>
@@ -308,7 +312,9 @@ function Dashboard({ children }: { children: React.ReactNode }) {
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="flex h-16 items-center justify-between bg-white px-6 shadow-sm z-10">
-          <h1 className="text-xl font-semibold text-gray-800">Network Segments</h1>
+          <h1 className="text-xl font-semibold text-gray-800">
+            {currentView === 'segments' ? 'Network Segments' : 'Settings'}
+          </h1>
           <div className="flex-1 max-w-2xl mx-8">
             <GlobalSearch />
           </div>
@@ -363,6 +369,8 @@ function Dashboard({ children }: { children: React.ReactNode }) {
 }
 
 // Segments View
+import { SettingsView } from './SettingsView';
+
 function SegmentsView() {
   const { user } = useContext(AuthContext);
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -597,9 +605,10 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
   const [ips, setIps] = useState<IP[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [editingIp, setEditingIp] = useState<IP | null>(null);
-  const [ipToDelete, setIpToDelete] = useState<IP | null>(null);
   const [newIp, setNewIp] = useState({ ip_address: '', hostname: '', os: '', description: '' });
   const [error, setError] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 100;
 
   useEffect(() => {
     fetchIps();
@@ -620,17 +629,7 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
       })
       .then(data => {
         if (Array.isArray(data)) {
-          const sortedIps = [...data].sort((a, b) => {
-            const numA = a.ip_address.split('.').map(Number);
-            const numB = b.ip_address.split('.').map(Number);
-            for (let i = 0; i < 4; i++) {
-              if (numA[i] !== numB[i]) {
-                return numA[i] - numB[i];
-              }
-            }
-            return 0;
-          });
-          setIps(sortedIps);
+          setIps(data);
         } else {
           console.error('Expected array of IPs, got:', data);
           setIps([]);
@@ -708,14 +707,10 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
     setError('');
   };
 
-  const executeDeleteIp = async () => {
-    if (!ipToDelete) return;
-    await fetch(`/api/ips/${ipToDelete.id}`, { method: 'DELETE' });
-    setIpToDelete(null);
-    fetchIps();
-  };
-
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
+  
+  const totalPages = Math.ceil(ips.length / itemsPerPage);
+  const displayedIps = ips.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <div className="space-y-6">
@@ -730,33 +725,38 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
           <h2 className="text-2xl font-bold text-gray-900">{segment.name}</h2>
           <p className="text-sm text-gray-500 font-mono mt-1">{segment.network} / {segment.subnet_mask}</p>
         </div>
-        {canEdit && (
-          <Button onClick={() => {
-            setEditingIp(null);
-            setNewIp({ ip_address: '', hostname: '', os: '', description: '' });
-            setShowAdd(!showAdd);
-          }}>
-            <Plus className="h-4 w-4 mr-2" /> Add IP
-          </Button>
-        )}
       </div>
 
       {showAdd && (
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h3 className="text-md font-medium mb-4">{editingIp ? 'Edit IP Address' : 'New IP Address'}</h3>
-          {error && <div className="text-red-500 text-sm mb-4">{error}</div>}
-          <form onSubmit={handleAddIp} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Input placeholder="IP Address (e.g. 192.168.1.10)" required value={newIp.ip_address} onChange={e => setNewIp({...newIp, ip_address: e.target.value})} />
-              <Input placeholder="Hostname" value={newIp.hostname} onChange={e => setNewIp({...newIp, hostname: e.target.value})} />
-              <Input placeholder="OS (e.g. Windows, Linux)" value={newIp.os} onChange={e => setNewIp({...newIp, os: e.target.value})} />
-              <Input placeholder="Description" value={newIp.description} onChange={e => setNewIp({...newIp, description: e.target.value})} />
-            </div>
-            <div className="flex justify-end space-x-2">
-              <Button type="button" variant="outline" onClick={handleCancelAddIp}>Cancel</Button>
-              <Button type="submit">{editingIp ? 'Update IP' : 'Save IP'}</Button>
-            </div>
-          </form>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-2xl w-full">
+            <h3 className="text-lg font-medium mb-4">{editingIp ? 'Edit IP Address' : 'New IP Address'}</h3>
+            {error && <div className="text-red-500 text-sm mb-4">{error}</div>}
+            <form onSubmit={handleAddIp} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">IP Address</label>
+                  <Input placeholder="e.g. 192.168.1.10" required value={newIp.ip_address} onChange={e => setNewIp({...newIp, ip_address: e.target.value})} disabled={!!editingIp} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Hostname</label>
+                  <Input placeholder="Hostname" value={newIp.hostname} onChange={e => setNewIp({...newIp, hostname: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">OS</label>
+                  <Input placeholder="e.g. Windows, Linux" value={newIp.os} onChange={e => setNewIp({...newIp, os: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <Input placeholder="Description" value={newIp.description} onChange={e => setNewIp({...newIp, description: e.target.value})} />
+                </div>
+              </div>
+              <div className="flex justify-end space-x-3 mt-6">
+                <Button type="button" variant="outline" onClick={handleCancelAddIp}>Cancel</Button>
+                <Button type="submit">{editingIp ? 'Update IP' : 'Save IP'}</Button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -774,7 +774,7 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {ips.map((ip) => (
+            {displayedIps.map((ip) => (
               <tr key={ip.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -803,9 +803,6 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
                       <button onClick={() => handleEditIpClick(ip)} className="text-indigo-600 hover:text-indigo-900">
                         <Edit2 className="h-4 w-4" />
                       </button>
-                      <button onClick={() => setIpToDelete(ip)} className="text-red-600 hover:text-red-900">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
                     </div>
                   </td>
                 )}
@@ -820,31 +817,53 @@ function IPsView({ segment, onBack }: { segment: Segment, onBack: () => void }) 
             )}
           </tbody>
         </table>
-      </div>
-
-      {ipToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full mx-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Delete IP</h3>
-            <p className="text-sm text-gray-500 mb-4">Are you sure you want to delete the IP "{ipToDelete.ip_address}"? This action cannot be undone.</p>
-            <div className="flex justify-end space-x-3">
-              <Button variant="outline" onClick={() => setIpToDelete(null)}>Cancel</Button>
-              <button onClick={executeDeleteIp} className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm font-medium">Delete</button>
+        
+        {totalPages > 1 && (
+          <div className="bg-white px-4 py-3 border-t border-gray-200 flex items-center justify-between sm:px-6">
+            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm text-gray-700">
+                  Showing <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> to <span className="font-medium">{Math.min(currentPage * itemsPerPage, ips.length)}</span> of <span className="font-medium">{ips.length}</span> results
+                </p>
+              </div>
+              <div>
+                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </nav>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
 export default function App() {
+  const [currentView, setCurrentView] = useState('segments');
+
   return (
     <AuthProvider>
       <AuthContext.Consumer>
         {({ user }) => user ? (
-          <Dashboard>
-            <SegmentsView />
+          <Dashboard currentView={currentView} onNavigate={setCurrentView}>
+            {currentView === 'segments' ? <SegmentsView /> : <SettingsView />}
           </Dashboard>
         ) : (
           <Login />
