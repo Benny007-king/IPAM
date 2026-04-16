@@ -1,0 +1,20 @@
+# Dependency directories
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+.env.local
+
+# Database files (CRITICAL SECURITY)
+*.db
+*.db-wal
+*.db-shm
+database.sqlite
+database.sqlite-journal
+
+# OS generated files
+.DS_Store
+Thumbs.db
