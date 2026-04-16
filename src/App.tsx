@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { User, Segment, IP, Notification } from './types';
 import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
@@ -242,6 +242,37 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
   const { user, logout } = useContext(AuthContext);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
+  const [sidebarSegments, setSidebarSegments] = useState<Segment[]>([]);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setShowNotifs(false);
+      }
+    };
+    if (showNotifs) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showNotifs]);
+
+  useEffect(() => {
+    const fetchSidebarSegments = () => {
+      fetch('/api/segments')
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setSidebarSegments(data);
+        })
+        .catch(console.error);
+    };
+
+    fetchSidebarSegments();
+    window.addEventListener('segments-changed', fetchSidebarSegments);
+    return () => window.removeEventListener('segments-changed', fetchSidebarSegments);
+  }, []);
 
   useEffect(() => {
     const fetchNotifs = () => {
@@ -276,30 +307,73 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
   const unreadCount = notifications.filter(n => !n.is_read).length;
 
   const markAsRead = async (id: number) => {
-    await fetch(`/api/notifications/${id}/read`, { method: 'POST' });
-    setNotifications(notifications.map(n => n.id === id ? { ...n, is_read: true } : n));
+    try {
+      const res = await fetch(`/api/notifications/${id}/read`, { method: 'POST' });
+      if (res.ok) {
+        setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+      }
+    } catch (err) {
+      console.error('Error marking as read:', err);
+    }
   };
 
   const muteIp = async (ipId: number, notifId: number) => {
-    await fetch(`/api/ips/${ipId}/mute`, { method: 'POST' });
-    markAsRead(notifId);
+    try {
+      const res = await fetch(`/api/ips/${ipId}/mute`, { method: 'POST' });
+      if (res.ok) {
+        markAsRead(notifId);
+      }
+    } catch (err) {
+      console.error('Error muting IP:', err);
+    }
   };
 
   return (
     <div className="flex h-screen bg-gray-100">
       {/* Sidebar */}
-      <div className="w-64 bg-slate-900 text-white flex flex-col">
-        <div className="flex h-16 items-center px-6 border-b border-slate-800">
+      <div className="w-64 bg-slate-900 text-white flex flex-col h-full">
+        <div className="flex h-16 items-center px-6 border-b border-slate-800 shrink-0">
           <Network className="h-6 w-6 text-indigo-400 mr-2" />
           <span className="text-lg font-bold">IPAM System</span>
         </div>
-        <nav className="flex-1 px-4 py-6 space-y-2">
-          <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('segments'); }} className={`flex items-center px-2 py-2 text-sm font-medium rounded-md ${currentView === 'segments' ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+        <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto custom-scrollbar">
+          <a href="#" onClick={(e) => { 
+            e.preventDefault(); 
+            onNavigate('segments'); 
+            window.dispatchEvent(new CustomEvent('navigate-segment', { detail: { segmentId: null } }));
+          }} className={`flex items-center px-2 py-2 text-sm font-medium rounded-md ${currentView === 'segments' ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
             <Server className="mr-3 h-5 w-5 text-slate-400" />
-            Segments
+            All Segments
           </a>
+
+          {sidebarSegments.length > 0 && (
+            <div className="mt-6">
+              <div className="px-2 mb-2 text-xs font-semibold tracking-wider text-slate-500 uppercase">
+                My Networks
+              </div>
+              <div className="space-y-1">
+                {sidebarSegments.map(segment => (
+                  <a
+                    key={segment.id}
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onNavigate('segments');
+                      setTimeout(() => {
+                        window.dispatchEvent(new CustomEvent('navigate-segment', { detail: { segmentId: segment.id } }));
+                      }, 50);
+                    }}
+                    className="flex items-center px-2 py-2 text-sm font-medium rounded-md text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <div className="w-1.5 h-1.5 mr-3 rounded-full bg-indigo-500"></div>
+                    <span className="truncate">{segment.name}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </nav>
-        <div className="p-4 border-t border-slate-800">
+        <div className="p-4 border-t border-slate-800 shrink-0">
           <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('settings'); }} className={`flex items-center px-2 py-2 mb-4 text-sm font-medium rounded-md ${currentView === 'settings' ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
             <Settings className="mr-3 h-5 w-5 text-slate-400" />
             Settings
@@ -326,7 +400,7 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
           <div className="flex-1 max-w-2xl mx-8">
             <GlobalSearch />
           </div>
-          <div className="relative">
+          <div className="relative" ref={notifRef}>
             <button 
               className="p-2 text-gray-400 hover:text-gray-500 relative"
               onClick={() => setShowNotifs(!showNotifs)}
@@ -357,10 +431,10 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
                         </div>
                         {!n.is_read && (
                           <div className="flex space-x-3 mt-2">
-                            <button onClick={() => markAsRead(n.id)} className="text-xs text-indigo-600 hover:underline cursor-pointer">
+                            <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); markAsRead(n.id); }} className="text-xs text-indigo-600 hover:underline cursor-pointer">
                               Mark as read
                             </button>
-                            <button onClick={() => muteIp(n.ip_id, n.id)} className="text-xs text-red-600 hover:underline cursor-pointer">
+                            <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); muteIp(n.ip_id, n.id); }} className="text-xs text-red-600 hover:underline cursor-pointer">
                               Mute IP
                             </button>
                           </div>
@@ -405,11 +479,15 @@ function SegmentsView() {
       const ipId = e.detail.ipId;
       setTargetIpId(ipId || null);
       
+      if (!segId) {
+        setSelectedSegment(null);
+        return;
+      }
+      
       const seg = segments.find(s => s.id === segId);
       if (seg) {
         setSelectedSegment(seg);
       } else {
-        // If segment is not in the current list, fetch it
         fetch(`/api/segments/${segId}`)
           .then(res => res.json())
           .then(data => {
@@ -438,6 +516,7 @@ function SegmentsView() {
       .then(data => {
         if (Array.isArray(data)) {
           setSegments(data);
+          window.dispatchEvent(new Event('segments-changed'));
         } else {
           console.error('Expected array of segments, got:', data);
           setSegments([]);
