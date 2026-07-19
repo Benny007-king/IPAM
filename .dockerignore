@@ -5,3 +5,9 @@ dist
 *.db
 *.db-wal
 *.db-shm
+
+# Large Windows deploy artifacts — not needed inside the container image
+nssm.exe
+prereqs/
+Output/
+*.msi

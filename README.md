@@ -90,6 +90,21 @@ then map AD groups to IPAM roles under **AD Groups Permissions**. On login, a us
 membership is resolved to the highest matching role. Use **Test Connection** to validate the
 service-account credentials before saving.
 
+## Docker
+
+A `Dockerfile` is included for containerized deployment:
+
+```bash
+docker build -t ipam .
+docker run -p 3000:3000 \
+  -e JWT_SECRET="your-long-random-secret" \
+  -v ipam-data:/app \
+  ipam
+```
+
+The container runs in production mode and serves the built frontend on port 3000. Mount a
+volume so the SQLite database (`ipam.db`) survives container restarts.
+
 ## Deployment on Windows (IIS + service)
 
 The repo includes helper scripts for a Windows deployment:
