@@ -1,0 +1,22 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+
+# Environment / secrets
+.env*
+!.env.example
+
+# SQLite database (runtime data + password hashes) — never commit
+ipam.db
+ipam.db-wal
+ipam.db-shm
+*.sqlite
+
+# Large binaries / deploy artifacts (kept out of source control)
+nssm.exe
+prereqs/
+Output/
+*.msi

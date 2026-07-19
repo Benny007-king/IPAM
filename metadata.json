@@ -1,0 +1,5 @@
+{
+  "name": "IPAM",
+  "description": "Self-hosted IP Address Management with live ping monitoring, segments, and LDAP/local auth.",
+  "requestFramePermissions": []
+}
