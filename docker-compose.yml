@@ -1,0 +1,29 @@
+services:
+  ipam:
+    build: .
+    # Fixed container name instead of a random Docker-generated one.
+    container_name: ipam
+    restart: unless-stopped
+
+    # host networking makes pings originate from the host's own IP and reach
+    # every device on the host's LAN directly — a bridge network would put the
+    # container on an isolated 172.x subnet and NAT/masquerade its traffic, so
+    # monitored devices would see the Docker gateway/host NAT instead of a real
+    # source on their subnet. Host networking is Linux-only.
+    network_mode: host
+
+    environment:
+      NODE_ENV: production
+      # Set a long random value in production:
+      JWT_SECRET: "change-me-to-a-long-random-secret"
+      # Keep the database on the mounted volume so it survives rebuilds.
+      DB_PATH: /app/data/ipam.db
+      # PORT: 3000
+      # COOKIE_SECURE: "false"   # set "true" only when served over HTTPS
+
+    # Persist the SQLite database outside the container so data survives rebuilds.
+    volumes:
+      - ipam-data:/app/data
+
+volumes:
+  ipam-data:

@@ -92,18 +92,40 @@ service-account credentials before saving.
 
 ## Docker
 
-A `Dockerfile` is included for containerized deployment:
+The fastest way to run IPAM is with the included `docker-compose.yml`:
+
+```bash
+docker compose up -d --build
+```
+
+This gives you a container named **`ipam`** (not a random name), a persisted database, and
+**host networking** so monitoring works correctly. It serves on port 3000 in production mode.
+
+### Why host networking? (ping source IP)
+
+The ping service must reach every device on your LAN, and monitored devices should see the ping
+coming from the host — not from Docker. On a default **bridge** network the container sits on an
+isolated `172.x` subnet and its traffic is NAT'd, so devices see the Docker gateway / host NAT
+and same-subnet devices may be unreachable. `network_mode: host` (set in the compose file) makes
+the container share the host's network stack, so pings originate from the host's real IP and
+interfaces. **Host networking is Linux-only** — on Windows/macOS Docker Desktop, run IPAM as a
+native process / Windows service instead (see below).
+
+> The image installs `iputils-ping`, which the monitoring service shells out to.
+
+### Plain `docker run`
+
+If you prefer not to use compose, pass `--name` so the container isn't given a random name, and
+`--network host` so pings come from the host:
 
 ```bash
 docker build -t ipam .
-docker run -p 3000:3000 \
+docker run -d --name ipam --network host \
   -e JWT_SECRET="your-long-random-secret" \
-  -v ipam-data:/app \
+  -e DB_PATH="/app/data/ipam.db" \
+  -v ipam-data:/app/data \
   ipam
 ```
-
-The container runs in production mode and serves the built frontend on port 3000. Mount a
-volume so the SQLite database (`ipam.db`) survives container restarts.
 
 ## Deployment on Windows (IIS + service)
 

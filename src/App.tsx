@@ -242,6 +242,29 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
   const { user, logout } = useContext(AuthContext);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
+  const [segments, setSegments] = useState<Segment[]>([]);
+
+  // Keep the sidebar list of segments in sync (fetched on mount, refreshed
+  // whenever a segment is added/updated/deleted via the 'segments-updated' event).
+  useEffect(() => {
+    const fetchSegments = () => {
+      fetch('/api/segments')
+        .then(res => res.ok ? res.json() : [])
+        .then(data => setSegments(Array.isArray(data) ? data : []))
+        .catch(() => {});
+    };
+    fetchSegments();
+    window.addEventListener('segments-updated', fetchSegments);
+    return () => window.removeEventListener('segments-updated', fetchSegments);
+  }, []);
+
+  const openSegment = (segmentId: number) => {
+    onNavigate('segments');
+    window.dispatchEvent(new CustomEvent('change-view', { detail: { view: 'segments' } }));
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('navigate-segment', { detail: { segmentId } }));
+    }, 50);
+  };
 
   useEffect(() => {
     const fetchNotifs = () => {
@@ -293,11 +316,26 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
           <Network className="h-6 w-6 text-indigo-400 mr-2" />
           <span className="text-lg font-bold">IPAM System</span>
         </div>
-        <nav className="flex-1 px-4 py-6 space-y-2">
+        <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
           <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('segments'); }} className={`flex items-center px-2 py-2 text-sm font-medium rounded-md ${currentView === 'segments' ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
             <Server className="mr-3 h-5 w-5 text-slate-400" />
             Segments
           </a>
+          {segments.length > 0 && (
+            <div className="ml-4 mt-1 space-y-0.5 border-l border-slate-800 pl-2">
+              {segments.map(seg => (
+                <a
+                  key={seg.id}
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); openSegment(seg.id); }}
+                  title={`${seg.network} / ${seg.subnet_mask}`}
+                  className="block px-2 py-1.5 text-sm rounded-md text-slate-400 hover:bg-slate-800 hover:text-white truncate"
+                >
+                  {seg.name}
+                </a>
+              ))}
+            </div>
+          )}
         </nav>
         <div className="p-4 border-t border-slate-800">
           {user?.role === 'admin' && (
@@ -444,6 +482,8 @@ function SegmentsView() {
           console.error('Expected array of segments, got:', data);
           setSegments([]);
         }
+        // Notify the sidebar to refresh its segment list.
+        window.dispatchEvent(new CustomEvent('segments-updated'));
       })
       .catch(err => {
         console.error('Error fetching segments:', err);

@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
 
-const db = new Database('ipam.db');
+// DB location is configurable so it can live on a mounted volume (e.g. in Docker).
+const db = new Database(process.env.DB_PATH || 'ipam.db');
 
 // Enable foreign keys and WAL mode for better concurrency
 db.pragma('foreign_keys = ON');
