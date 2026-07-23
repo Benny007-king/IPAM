@@ -5,12 +5,27 @@ services:
     container_name: ipam
     restart: unless-stopped
 
-    # host networking makes pings originate from the host's own IP and reach
-    # every device on the host's LAN directly — a bridge network would put the
-    # container on an isolated 172.x subnet and NAT/masquerade its traffic, so
-    # monitored devices would see the Docker gateway/host NAT instead of a real
-    # source on their subnet. Host networking is Linux-only.
-    network_mode: host
+    # Default: bridge networking with a published port. This works everywhere,
+    # including Docker Desktop on Windows/macOS (where the Docker "host" is a
+    # Linux VM, so host networking would NOT be reachable from your desktop).
+    ports:
+      - "3000:3000"
+
+    # ---------------------------------------------------------------------
+    # LINUX HOSTS ONLY — accurate ping source IP
+    #
+    # On a bridge network the container sits on an isolated 172.x subnet and its
+    # traffic is NAT'd, so monitored devices see the Docker gateway instead of a
+    # real address on their subnet. To make pings originate from the host's own
+    # IP and interfaces, comment out the `ports:` block above and uncomment the
+    # line below. (Compose rejects combining published ports with host mode.)
+    #
+    # network_mode: host
+    #
+    # This does NOT work on Docker Desktop for Windows/macOS. For accurate LAN
+    # monitoring there, run IPAM natively as a Windows service instead — see the
+    # "Deployment on Windows" section of the README.
+    # ---------------------------------------------------------------------
 
     environment:
       NODE_ENV: production
@@ -18,8 +33,7 @@ services:
       JWT_SECRET: "change-me-to-a-long-random-secret"
       # Keep the database on the mounted volume so it survives rebuilds.
       DB_PATH: /app/data/ipam.db
-      # PORT: 3000
-      # COOKIE_SECURE: "false"   # set "true" only when served over HTTPS
+      # COOKIE_SECURE: "true"   # set only when served over HTTPS
 
     # Persist the SQLite database outside the container so data survives rebuilds.
     volumes:
