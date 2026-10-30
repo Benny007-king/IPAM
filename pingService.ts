@@ -1,105 +1,92 @@
 import ping from 'ping';
-import db from './database.js';
 import { differenceInHours, differenceInMinutes } from 'date-fns';
+import { db, isDbReady } from './db.js';
+
+const CHUNK_SIZE = 50;
+const INTERVAL_MS = 60_000;
+
+async function probe(target: string): Promise<boolean> {
+  try {
+    const res = await ping.promise.probe(target, { timeout: 1 });
+    return !!res.alive;
+  } catch {
+    return false;
+  }
+}
+
+async function runPing() {
+  let lastId = 0;
+  for (;;) {
+    if (!isDbReady()) return; // database unavailable or being switched — try again next minute
+    const chunk = await db('ips')
+      .select('id', 'ip_address', 'hostname', 'status', 'offline_since', 'notification_count', 'mute_notifications')
+      .where('id', '>', lastId)
+      .orderBy('id')
+      .limit(CHUNK_SIZE);
+    if (chunk.length === 0) return;
+    lastId = Number(chunk[chunk.length - 1].id);
+
+    const results = await Promise.all(
+      chunk.map(async (ip: any) => {
+        let alive = await probe(ip.ip_address);
+        if (!alive && ip.hostname) alive = await probe(ip.hostname);
+        return { ip, alive };
+      }),
+    );
+
+    if (!isDbReady()) return;
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    await db.transaction(async (trx) => {
+      for (const { ip, alive } of results) {
+        if (alive) {
+          await trx('ips')
+            .where({ id: ip.id })
+            .update({ status: 'online', last_seen: nowIso, offline_since: null, notification_count: 0 });
+          continue;
+        }
+
+        if (ip.status === 'online') {
+          // Just went offline: start the clock.
+          await trx('ips').where({ id: ip.id }).update({ status: 'offline', offline_since: nowIso, notification_count: 0 });
+          continue;
+        }
+        if (ip.status !== 'offline') await trx('ips').where({ id: ip.id }).update({ status: 'offline' });
+        if (!ip.offline_since || Number(ip.mute_notifications)) continue;
+
+        // 1st alert after 5 minutes, then one a day for up to 6 more days.
+        const since = new Date(ip.offline_since);
+        const count = Number(ip.notification_count) || 0;
+        let message = '';
+        if (count === 0 && differenceInMinutes(now, since) >= 5) {
+          message = `IP ${ip.ip_address} has been offline for 5 minutes.`;
+        } else if (count >= 1 && count < 7 && differenceInHours(now, since) >= count * 24) {
+          message = `IP ${ip.ip_address} has been offline for ${count * 24} hours.`;
+        }
+        if (message) {
+          await trx('notifications').insert({ ip_id: ip.id, message, type: 'offline_alert', is_read: 0, created_at: nowIso });
+          await trx('ips').where({ id: ip.id }).update({ notification_count: count + 1 });
+        }
+      }
+    });
+  }
+}
 
 export function startPingService() {
-  let isRunning = false;
-
-  const runPing = async () => {
-    if (isRunning) return;
-    isRunning = true;
-
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
     try {
-      const chunkSize = 50;
-      let offset = 0;
-      
-      const updateOnline = db.prepare('UPDATE ips SET status = ?, last_seen = ?, offline_since = NULL, notification_count = 0 WHERE id = ?');
-      const updateOffline = db.prepare('UPDATE ips SET status = ? WHERE id = ?');
-      const setOfflineSince = db.prepare('UPDATE ips SET offline_since = ?, notification_count = 0 WHERE id = ?');
-      const updateNotifCount = db.prepare('UPDATE ips SET notification_count = ? WHERE id = ?');
-      const insertNotif = db.prepare('INSERT INTO notifications (ip_id, message, type) VALUES (?, ?, ?)');
-
-      while (true) {
-        const chunk = db.prepare('SELECT id, ip_address, hostname, last_seen, status, offline_since, notification_count, mute_notifications FROM ips LIMIT ? OFFSET ?').all(chunkSize, offset) as any[];
-        if (chunk.length === 0) break;
-        
-        const results = await Promise.all(chunk.map(async (ip) => {
-          try {
-            let isAlive = false;
-            try {
-              const resIp = await ping.promise.probe(ip.ip_address, { timeout: 1 });
-              isAlive = resIp.alive;
-            } catch (e) {
-              // ignore
-            }
-
-            if (!isAlive && ip.hostname) {
-              try {
-                const resHost = await ping.promise.probe(ip.hostname, { timeout: 1 });
-                isAlive = resHost.alive;
-              } catch (e) {
-                // ignore
-              }
-            }
-            return { ip, isAlive };
-          } catch (error) {
-            console.error(`Failed to ping ${ip.ip_address}:`, error);
-            return { ip, isAlive: false, error: true };
-          }
-        }));
-
-        // Process DB updates for this chunk synchronously in a transaction
-        db.transaction(() => {
-          const now = new Date();
-          const nowIso = now.toISOString();
-          
-          for (const { ip, isAlive, error } of results) {
-            if (error) continue;
-
-            if (isAlive) {
-              updateOnline.run('online', nowIso, ip.id);
-            } else {
-              updateOffline.run('offline', ip.id);
-
-              if (ip.status === 'online') {
-                // Just went offline
-                setOfflineSince.run(nowIso, ip.id);
-              } else if (ip.offline_since && !ip.mute_notifications) {
-                const offlineDate = new Date(ip.offline_since);
-                const minsOffline = differenceInMinutes(now, offlineDate);
-                const hoursOffline = differenceInHours(now, offlineDate);
-                const notifCount = ip.notification_count || 0;
-
-                if (notifCount === 0 && minsOffline >= 5) {
-                  insertNotif.run(ip.id, `IP ${ip.ip_address} has been offline for 5 minutes.`, 'offline_alert');
-                  updateNotifCount.run(1, ip.id);
-                } else if (notifCount >= 1 && notifCount < 7) {
-                  // Next alert after 24 hours since the last threshold
-                  // 1st notif = 5 mins
-                  // 2nd notif = 24 hours
-                  // 3rd notif = 48 hours
-                  // ...
-                  const requiredHours = notifCount * 24;
-                  if (hoursOffline >= requiredHours) {
-                    insertNotif.run(ip.id, `IP ${ip.ip_address} has been offline for ${requiredHours} hours.`, 'offline_alert');
-                    updateNotifCount.run(notifCount + 1, ip.id);
-                  }
-                }
-              }
-            }
-          }
-        })();
-        
-        offset += chunkSize;
-      }
+      await runPing();
+    } catch (e: any) {
+      // Never let a failed round take the server down; the next round retries.
+      console.error('Ping round failed:', e?.message || e);
     } finally {
-      isRunning = false;
+      running = false;
     }
   };
-
-  // Run immediately
-  runPing();
-
-  // Run every 1 minute
-  setInterval(runPing, 60000);
+  tick();
+  setInterval(tick, INTERVAL_MS);
 }

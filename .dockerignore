@@ -1,12 +1,18 @@
 node_modules
 dist
+build
+release
 .git
+.github
 .env
 *.db
 *.db-wal
 *.db-shm
+database.json
+.jwt-secret
 
-# Large Windows deploy artifacts — not needed inside the container image
+# Windows-only deploy artifacts - not needed inside the container image
+installer
 nssm.exe
 prereqs/
 Output/

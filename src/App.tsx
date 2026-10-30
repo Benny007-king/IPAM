@@ -1,18 +1,21 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { User, Segment, IP, Notification } from './types';
 import { Button } from './components/ui/Button';
+import { formatDate } from './format';
 import { Input } from './components/ui/Input';
 import { Activity, Bell, LogOut, Network, Plus, Server, Trash2, Users, AlertTriangle, Edit2, X, Settings } from 'lucide-react';
 
 // Auth Context
 const AuthContext = createContext<{
   user: User | null;
+  version: string;
   login: (user: User) => void;
   logout: () => void;
-}>({ user: null, login: () => {}, logout: () => {} });
+}>({ user: null, version: '', login: () => {}, logout: () => {} });
 
 function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [version, setVersion] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -28,8 +31,17 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
       })
       .then(data => {
         if (data && data.user) setUser(data.user);
+        if (data && data.version) setVersion(data.version);
       })
+      .catch(() => {})
       .finally(() => setLoading(false));
+    // Public endpoint: gives the version even before signing in.
+    fetch('/api/health')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.version) setVersion(data.version);
+      })
+      .catch(() => {});
   }, []);
 
   const login = (u: User) => setUser(u);
@@ -40,7 +52,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   if (loading) return <div className="flex h-screen items-center justify-center">Loading...</div>;
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, version, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -239,7 +251,7 @@ function GlobalSearch() {
 
 // Dashboard Layout
 function Dashboard({ children, currentView, onNavigate }: { children: React.ReactNode, currentView: string, onNavigate: (view: string) => void }) {
-  const { user, logout } = useContext(AuthContext);
+  const { user, version, logout } = useContext(AuthContext);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -348,6 +360,7 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
             <div className="ml-3">
               <p className="text-sm font-medium text-white">{user?.username}</p>
               <p className="text-xs font-medium text-slate-400 capitalize">Role: {user?.role}</p>
+              {version && <p className="text-[11px] text-slate-500 mt-0.5">IPAM v{version}</p>}
             </div>
           </div>
           <Button variant="ghost" className="mt-4 w-full justify-start text-slate-300 hover:text-white hover:bg-slate-800" onClick={logout}>
@@ -392,7 +405,7 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
                           <AlertTriangle className={`h-4 w-4 mr-2 mt-0.5 ${n.type === '7_days' ? 'text-red-500' : 'text-amber-500'}`} />
                           <div className="flex-1">
                             <p className="text-gray-800">{n.message}</p>
-                            <p className="text-xs text-gray-500 mt-1">{new Date(n.created_at).toLocaleString()}</p>
+                            <p className="text-xs text-gray-500 mt-1">{formatDate(n.created_at, '')}</p>
                           </div>
                         </div>
                         {!n.is_read && (
@@ -589,8 +602,8 @@ function SegmentsView() {
           <form onSubmit={handleAddSegment} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <Input placeholder="Name (e.g. Servers)" required value={newSegment.name} onChange={e => setNewSegment({...newSegment, name: e.target.value})} />
-              <Input placeholder="Network (e.g. 192.168.1.0)" required value={newSegment.network} onChange={e => setNewSegment({...newSegment, network: e.target.value})} />
-              <Input placeholder="Subnet Mask (e.g. 255.255.255.0)" required value={newSegment.subnet_mask} onChange={e => setNewSegment({...newSegment, subnet_mask: e.target.value})} />
+              <Input placeholder="Network (e.g. 192.168.1.0/24)" required value={newSegment.network} onChange={e => setNewSegment({...newSegment, network: e.target.value})} />
+              <Input placeholder="Subnet mask (255.255.255.0 or /24)" required={!newSegment.network.includes('/')} value={newSegment.subnet_mask} onChange={e => setNewSegment({...newSegment, subnet_mask: e.target.value})} />
               <Input placeholder="Description" value={newSegment.description} onChange={e => setNewSegment({...newSegment, description: e.target.value})} />
             </div>
             <div className="flex justify-end space-x-2">
@@ -809,7 +822,7 @@ function IPsView({ segment, onBack, targetIpId }: { segment: Segment, onBack: ()
                 'OS': ip.os || '',
                 'Status': ip.status,
                 'Description': ip.description || '',
-                'Last Seen': ip.last_seen ? new Date(ip.last_seen).toLocaleString() : 'Never'
+                'Last Seen': formatDate(ip.last_seen)
               })));
               const wb = XLSX.utils.book_new();
               XLSX.utils.book_append_sheet(wb, ws, "IPs");
@@ -833,7 +846,7 @@ function IPsView({ segment, onBack, targetIpId }: { segment: Segment, onBack: ()
                   ip.os || '',
                   ip.status,
                   ip.description || '',
-                  ip.last_seen ? new Date(ip.last_seen).toLocaleString() : 'Never'
+                  formatDate(ip.last_seen)
                 ]),
                 startY: 20,
                 styles: { fontSize: 8 }
@@ -918,7 +931,7 @@ function IPsView({ segment, onBack, targetIpId }: { segment: Segment, onBack: ()
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{ip.os || '-'}</td>
                 <td className="px-6 py-4 text-sm text-gray-500">{ip.description || '-'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {ip.last_seen ? new Date(ip.last_seen).toLocaleString() : 'Never'}
+                  {formatDate(ip.last_seen)}
                 </td>
                 {canEdit && (
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">

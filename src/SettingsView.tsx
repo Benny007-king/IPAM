@@ -2,6 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
 import { Trash2, Edit2, Plus, CheckCircle, XCircle } from 'lucide-react';
+import { DatabaseSettings } from './DatabaseSettings';
+
+/** Send a JSON request; returns the server's error message when it fails. */
+async function send(method: string, url: string, body?: unknown): Promise<string | null> {
+  const res = await fetch(url, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.ok) return null;
+  try {
+    return (await res.json()).error || `Request failed (${res.status})`;
+  } catch {
+    return `Request failed (${res.status})`;
+  }
+}
 
 export function SettingsView() {
   const [users, setUsers] = useState<any[]>([]);
@@ -44,20 +60,11 @@ export function SettingsView() {
 
   const handleSaveLdap = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingLdapServer) {
-      await fetch(`/api/ldap/${editingLdapServer.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLdapServer)
-      });
-      setEditingLdapServer(null);
-    } else {
-      await fetch('/api/ldap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLdapServer)
-      });
-    }
+    const error = editingLdapServer
+      ? await send('PUT', `/api/ldap/${editingLdapServer.id}`, newLdapServer)
+      : await send('POST', '/api/ldap', newLdapServer);
+    if (error) return setAlertMsg(error);
+    setEditingLdapServer(null);
     setNewLdapServer({ server_name: '', dc_addresses: '', port: 389, service_account: '', password: '' });
     fetchLdapServers();
     setTestResult(null);
@@ -70,7 +77,8 @@ export function SettingsView() {
       const res = await fetch('/api/ldap/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLdapServer)
+        // When editing, the server reuses the stored password if this one is left blank.
+        body: JSON.stringify({ ...newLdapServer, id: editingLdapServer?.id })
       });
       const data = await res.json();
       if (res.ok) {
@@ -87,20 +95,11 @@ export function SettingsView() {
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingUser) {
-      await fetch(`/api/users/${editingUser.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newUser)
-      });
-      setEditingUser(null);
-    } else {
-      await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newUser)
-      });
-    }
+    const error = editingUser
+      ? await send('PUT', `/api/users/${editingUser.id}`, newUser)
+      : await send('POST', '/api/users', newUser);
+    if (error) return setAlertMsg(error);
+    setEditingUser(null);
     setNewUser({ username: '', password: '', role: 'readonly' });
     fetchUsers();
   };
@@ -112,7 +111,8 @@ export function SettingsView() {
   const confirmDeleteAction = async () => {
     if (!confirmDelete) return;
     if (confirmDelete.type === 'user') {
-      await fetch(`/api/users/${confirmDelete.id}`, { method: 'DELETE' });
+      const error = await send('DELETE', `/api/users/${confirmDelete.id}`);
+      if (error) setAlertMsg(error);
       fetchUsers();
     } else if (confirmDelete.type === 'adGroup') {
       await fetch(`/api/ad-groups/${confirmDelete.id}`, { method: 'DELETE' });
@@ -126,20 +126,11 @@ export function SettingsView() {
 
   const handleAddAdGroup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingAdGroup) {
-      await fetch(`/api/ad-groups/${editingAdGroup.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newAdGroup)
-      });
-      setEditingAdGroup(null);
-    } else {
-      await fetch('/api/ad-groups', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newAdGroup)
-      });
-    }
+    const error = editingAdGroup
+      ? await send('PUT', `/api/ad-groups/${editingAdGroup.id}`, newAdGroup)
+      : await send('POST', '/api/ad-groups', newAdGroup);
+    if (error) return setAlertMsg(error);
+    setEditingAdGroup(null);
     setNewAdGroup({ group_name: '', role: 'readonly' });
     fetchAdGroups();
   };
@@ -176,6 +167,8 @@ export function SettingsView() {
           </div>
         </div>
       )}
+
+      <DatabaseSettings />
 
       {/* LDAP Settings */}
       <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">

@@ -29,11 +29,24 @@ services:
 
     environment:
       NODE_ENV: production
-      # Set a long random value in production:
-      JWT_SECRET: "change-me-to-a-long-random-secret"
-      # Keep the database on the mounted volume so it survives rebuilds.
+      # The built-in SQLite database (and the connection settings saved from
+      # Settings > Database) live on the mounted volume, so they survive rebuilds.
       DB_PATH: /app/data/ipam.db
+      # The session-signing secret is generated on first start and kept in
+      # /app/data/.jwt-secret. Set JWT_SECRET only to share one between instances.
       # COOKIE_SECURE: "true"   # set only when served over HTTPS
+
+      # Optional: pin an external database here instead of choosing it in
+      # Settings > Database (the UI then shows it read-only). Either a URL...
+      # DATABASE_URL: postgres://ipam:secret@db.example.local:5432/ipam
+      # ...or the separate fields (DB_CLIENT: sqlite | postgres | mysql | mssql):
+      # DB_CLIENT: mssql
+      # DB_HOST: sql01.example.local   # or sql01\SQLEXPRESS for a named instance
+      # DB_PORT: "1433"
+      # DB_NAME: ipam
+      # DB_USER: ipam
+      # DB_PASSWORD: secret
+      # DB_TLS: trust                  # off | verify | trust
 
     # Persist the SQLite database outside the container so data survives rebuilds.
     volumes:

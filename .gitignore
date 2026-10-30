@@ -14,9 +14,18 @@ ipam.db
 ipam.db-wal
 ipam.db-shm
 *.sqlite
+data/
+
+# Runtime secrets written next to the database (DB connection incl. password, session key)
+database.json
+.jwt-secret
 
 # Large binaries / deploy artifacts (kept out of source control)
-nssm.exe
+# (installer/nssm.exe IS committed: the installer needs it)
+/nssm.exe
 prereqs/
 Output/
 *.msi
+
+# Executable build output (scripts/build-exe.mjs)
+release/
