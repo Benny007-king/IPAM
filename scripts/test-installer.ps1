@@ -33,6 +33,18 @@ function Sign-In {
   Invoke-RestMethod "$Base/api/auth/login" -Method Post -Body $body -ContentType 'application/json' -SessionVariable s | Out-Null
   return $s
 }
+# A JSON array as a real list on both PowerShell 5.1 and 7 (Invoke-RestMethod
+# hands an array over as ONE object, so @(...) would wrap it in another array).
+function Get-List($path, $session) {
+  $json = (Invoke-WebRequest "$Base$path" -WebSession $session -UseBasicParsing).Content
+  $items = [System.Collections.Generic.List[object]]::new()
+  foreach ($x in ($json | ConvertFrom-Json)) { foreach ($y in $x) { $items.Add($y) } }
+  return , $items
+}
+function Show-Log {
+  if (Test-Path "$DataDir\logs\ipam.log") { Write-Host '--- ipam.log ---'; Get-Content "$DataDir\logs\ipam.log" -Tail 40 | Write-Host }
+}
+trap { Show-Log; throw }
 
 Step "Install $([IO.Path]::GetFileName($Setup)) on port $Port"
 Run-Setup $Setup @("/PORT=$Port", "/LOG=$PSScriptRoot\..\release\install.log")
@@ -54,9 +66,10 @@ Assert ($seg.id -gt 0) 'segment created'
 $deadline = (Get-Date).AddSeconds(150)
 do {
   Start-Sleep 5
-  $ips = @(Invoke-RestMethod "$Base/api/segments/$($seg.id)/ips" -WebSession $s)
-  $online = @($ips | Where-Object status -eq 'online').Count
+  $ips = Get-List "/api/segments/$($seg.id)/ips" $s
+  $online = ($ips | Where-Object { $_.status -eq 'online' } | Measure-Object).Count
 } while ($online -lt 2 -and (Get-Date) -lt $deadline)
+Write-Host ('  ' + (($ips | ForEach-Object { "$($_.ip_address)=$($_.status)" }) -join ', '))
 Assert ($ips.Count -eq 2) 'segment populated with its 2 hosts'
 Assert ($online -eq 2) 'the service pings them (both online)'
 
@@ -73,8 +86,8 @@ Step 'Upgrade in place (same setup again)'
 Run-Setup $Setup @()
 Wait-Healthy | Out-Null
 $s = Sign-In
-$after = @(Invoke-RestMethod "$Base/api/segments" -WebSession $s)
-Assert (@($after | Where-Object name -eq 'Loopback').Count -eq 1) 'data kept across the upgrade'
+$after = Get-List '/api/segments' $s
+Assert (($after | Where-Object { $_.name -eq 'Loopback' } | Measure-Object).Count -eq 1) 'data kept across the upgrade'
 Assert ((Get-ItemProperty 'HKLM:\Software\IPAM').Port -eq "$Port") 'the chosen port is remembered'
 
 Step 'Uninstall'
