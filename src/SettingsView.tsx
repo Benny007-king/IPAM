@@ -3,6 +3,7 @@ import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
 import { Trash2, Edit2, Plus, CheckCircle, XCircle } from 'lucide-react';
 import { DatabaseSettings } from './DatabaseSettings';
+import { SoftwareSettings } from './SoftwareSettings';
 
 /** Send a JSON request; returns the server's error message when it fails. */
 async function send(method: string, url: string, body?: unknown): Promise<string | null> {
@@ -167,6 +168,8 @@ export function SettingsView() {
           </div>
         </div>
       )}
+
+      <SoftwareSettings />
 
       <DatabaseSettings />
 

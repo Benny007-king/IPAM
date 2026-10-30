@@ -26,6 +26,7 @@ import {
   withStoredPassword,
 } from './db.js';
 import { refreshSegment, startPingService } from './pingService.js';
+import { cleanupAfterUpgrade, discardPending, installPending, receiveUpload, systemInfo, UpgradeError } from './upgrade.js';
 import { appRoot, appVersion, dataDir, isPackaged, writeFileAtomic } from './paths.js';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -199,6 +200,11 @@ function recordFailure(key: string) {
 
 async function startServer() {
   await initDatabase();
+  try {
+    cleanupAfterUpgrade();
+  } catch (e: any) {
+    console.error('Upgrade clean-up failed:', e?.message || e);
+  }
 
   const app = express();
   const isProd = process.env.NODE_ENV === 'production' || isPackaged;
@@ -815,6 +821,46 @@ async function startServer() {
     }),
   );
 
+  /* ---------------- software & upgrade ---------------- */
+
+  app.get(
+    '/api/system',
+    requireAuth,
+    requireRole(['admin']),
+    ah(async (_req, res) => {
+      res.json(await systemInfo());
+    }),
+  );
+
+  // Body = the IPAM-Setup-x.y.z.exe itself (application/octet-stream).
+  app.post(
+    '/api/system/upgrade',
+    requireAuth,
+    requireRole(['admin']),
+    ah(async (req: any, res) => {
+      res.json({ pending: await receiveUpload(req, req.user.username) });
+    }),
+  );
+
+  app.post(
+    '/api/system/upgrade/install',
+    requireAuth,
+    requireRole(['admin']),
+    ah(async (req: any, res) => {
+      res.status(202).json(await installPending(req.user.username));
+    }),
+  );
+
+  app.delete(
+    '/api/system/upgrade',
+    requireAuth,
+    requireRole(['admin']),
+    ah(async (_req, res) => {
+      discardPending();
+      res.json({ success: true });
+    }),
+  );
+
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Not found' });
   });
@@ -834,7 +880,7 @@ async function startServer() {
   }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
+    if (err instanceof HttpError || err instanceof UpgradeError) return res.status(err.status).json({ error: err.message });
     if (err instanceof DbError) return res.status(err.status).json({ error: err.message });
     if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON body' });
     if (isConnectionError(err)) return res.status(503).json({ error: `The database is not reachable: ${explainDbError(err)}` });

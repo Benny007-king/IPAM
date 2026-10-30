@@ -90,6 +90,40 @@ $after = Get-List '/api/segments' $s
 Assert (($after | Where-Object { $_.name -eq 'Loopback' } | Measure-Object).Count -eq 1) 'data kept across the upgrade'
 Assert ((Get-ItemProperty 'HKLM:\Software\IPAM').Port -eq "$Port") 'the chosen port is remembered'
 
+Step 'Upgrade from the app (Settings > Software & Upgrade)'
+$s = Sign-In
+$sys = Invoke-RestMethod "$Base/api/system" -WebSession $s
+Assert ($sys.mode -eq 'service' -and $sys.canInstall) "the installed service can upgrade itself (mode: $($sys.mode))"
+$uploaded = $null
+try {
+  $r = Invoke-WebRequest "$Base/api/system/upgrade" -Method Post -InFile $Setup -ContentType 'application/octet-stream' `
+    -Headers @{ 'X-File-Name' = [IO.Path]::GetFileName($Setup) } -WebSession $s -UseBasicParsing
+  $uploaded = ($r.Content | ConvertFrom-Json).pending
+} catch {
+  $msg = $_.ErrorDetails.Message
+  # A re-run after this version was published: the CI build is not byte-identical
+  # to the published setup, so the app (rightly) refuses it as unofficial.
+  if ($msg -match 'not the official') { Write-Host "  skipped: v$($sys.version) is already published with another build ($msg)" -ForegroundColor Yellow }
+  else { throw "upload failed: $msg" }
+}
+if ($uploaded) {
+  Assert ($uploaded.version -eq $sys.version -and $uploaded.reinstall) "the uploaded setup is checked (IPAM $($uploaded.version), $($uploaded.verification))"
+  $r = Invoke-WebRequest "$Base/api/system/upgrade/install" -Method Post -WebSession $s -UseBasicParsing
+  Assert ($r.StatusCode -eq 202) 'install started'
+  $deadline = (Get-Date).AddMinutes(6); $state = ''; $sawDown = $false
+  do {
+    Start-Sleep 3
+    try { $state = (Invoke-RestMethod "$Base/api/system" -WebSession $s -TimeoutSec 5).upgrade.state } catch { $sawDown = $true; $state = 'restarting' }
+  } while ($state -notin @('done', 'failed') -and (Get-Date) -lt $deadline)
+  if ($state -ne 'done' -and (Test-Path "$DataDir\upgrade\install.log")) { Get-Content "$DataDir\upgrade\install.log" -Tail 30 | Write-Host }
+  Assert ($state -eq 'done') "the setup ran outside the service and IPAM came back (state: $state)"
+  Assert $sawDown 'the service really restarted'
+  Assert ((Get-Service IPAM).Status -eq 'Running') 'service running after the upgrade from the app'
+  $after = Get-List '/api/segments' $s
+  Assert (($after | Where-Object { $_.name -eq 'Loopback' } | Measure-Object).Count -eq 1) 'data kept across the upgrade from the app'
+  Assert (-not (Test-Path "$DataDir\upgrade\$($uploaded.file)")) 'the uploaded setup file was cleaned up'
+}
+
 Step 'Uninstall'
 Run-Setup "$AppDir\unins000.exe" @()
 Start-Sleep 2

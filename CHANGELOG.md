@@ -3,11 +3,21 @@
 Versions follow `major.minor.patch`; each release is tagged `vX.Y.Z`.
 Pushing a tag builds, tests and publishes the Windows installer (see `.github/workflows/release.yml`).
 
-## [1.1.1] - 2026-10-30
+## [1.2.0] - 2026-10-30
 
 ### Added
+- **Upgrade from the app.** *Settings → Software & Upgrade* takes the new `IPAM-Setup-x.y.z.exe`, checks it
+  before anything changes — an IPAM setup, not a downgrade (the same version repairs), and, when GitHub can be
+  reached, the very file published with that release (its SHA-256 must be in the release's `SHA256SUMS`; a
+  modified file is refused) — then installs it on confirmation. The setup runs outside the IPAM service and a
+  watchdog starts the service again whatever happens; the page follows the restart and reloads on the new
+  version. The page also shows the running version and whether a newer release is out.
 - **Refresh** on a segment's page pings all its addresses right away instead of waiting for the next
   minute's round. Segments of more than 1,024 addresses are checked in the background and the table fills in.
+
+### Changed
+- **Windows only, one file.** IPAM is installed and upgraded with `IPAM-Setup-x.y.z.exe`. Docker support
+  (Dockerfile, docker-compose), the portable zip and the old IIS / batch-file deployment are removed.
 
 ### Fixed
 - After opening a segment, **Segments** in the sidebar did not return to the list of segments, so

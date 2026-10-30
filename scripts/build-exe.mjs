@@ -2,8 +2,8 @@
 //   release/ipam/ipam.exe            server + UI + Node runtime in one file
 //   release/ipam/better_sqlite3.node the SQLite engine, loaded from beside the exe
 //   release/ipam/nssm.exe            runs ipam.exe as a Windows service
-//   release/IPAM-<version>-win-x64-portable.zip
-// The installer (installer/ipam.iss) is compiled from release/ipam afterwards.
+// The installer (installer/ipam.iss) is compiled from release/ipam afterwards;
+// that IPAM-Setup-<version>.exe is the only file a release ships.
 //
 // Usage: node scripts/build-exe.mjs [--skip-ui]
 import { execSync } from 'node:child_process';
@@ -100,9 +100,9 @@ writeFileSync(
     '  Sign in:  admin / admin123 - change it under Settings > Local Users',
     '  Data:     C:\\ProgramData\\IPAM  (database, connection settings, logs)',
     '  Service:  services.msc > IPAM, or "nssm restart IPAM" from this folder',
-    '',
-    'Portable use (the zip): double-click ipam.exe. Data is kept in the "data" folder',
-    'next to it and the browser opens on http://localhost:3000/. Set PORT to change it.',
+    '  Upgrade:  Settings > Software & Upgrade > upload the new IPAM-Setup-x.y.z.exe',
+    '            (or run that setup file) - data and settings are kept',
+    '  Admin password lost: "ipam.exe --reset-admin" from an administrator prompt',
     '',
     'Database: Settings > Database connects IPAM to PostgreSQL, MySQL / MariaDB or',
     'Microsoft SQL Server and can copy your data across.',
@@ -112,11 +112,7 @@ writeFileSync(
   ].join('\r\n'),
 );
 
-// 5. Portable zip.
-const zip = path.join(root, 'release', `IPAM-${version}-win-x64-portable.zip`);
-run(`powershell -NoProfile -Command "Compress-Archive -Path '${out}\\*' -DestinationPath '${zip}' -Force"`);
-
 const mb = (f) => (statSync(f).size / 1048576).toFixed(1) + ' MB';
 console.log(`\nBuilt IPAM ${version} with Node ${process.versions.node}:`);
 console.log(`  ${path.join(out, 'ipam.exe')}  ${mb(path.join(out, 'ipam.exe'))}`);
-console.log(`  ${zip}  ${mb(zip)}`);
+console.log('Next: iscc /DAppVersion=' + version + ' installer\\ipam.iss  ->  release\\IPAM-Setup-' + version + '.exe');

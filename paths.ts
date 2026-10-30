@@ -44,7 +44,7 @@ function installedDataDir(): string | null {
  * Where IPAM keeps its data: the SQLite file, the database connection
  * settings and the session-signing secret.
  *   DATA_DIR            explicit
- *   DB_PATH             the folder of that SQLite file (Docker)
+ *   DB_PATH             the folder of that SQLite file
  *   installed ipam.exe  DataDir from ipam.ini (C:\ProgramData\IPAM), also when run by hand
  *   portable ipam.exe   a "data" folder next to the executable
  *   otherwise           the working directory (development)

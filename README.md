@@ -6,7 +6,7 @@ to track online/offline status, raises notifications when a host stays down, and
 role-based access with local accounts and Active Directory (LDAP).
 
 Data lives in the built-in **SQLite** file or in your own **PostgreSQL**, **MySQL / MariaDB**
-or **Microsoft SQL Server**. On Windows it installs as a service from a single setup file.
+or **Microsoft SQL Server**. It runs on Windows as a service, installed and upgraded from one setup file.
 
 **Download:** [latest release](https://github.com/Benny007-king/IPAM/releases/latest) ·
 **Changes:** [CHANGELOG.md](CHANGELOG.md)
@@ -27,50 +27,40 @@ or **Microsoft SQL Server**. On Windows it installs as a service from a single s
 
 ## Install
 
-### Windows (recommended)
-
-Download **`IPAM-Setup-<version>.exe`** from the [latest release](https://github.com/Benny007-king/IPAM/releases/latest) and run it.
+IPAM runs on **Windows** as a service, from one setup file. Download **`IPAM-Setup-<version>.exe`** from the
+[latest release](https://github.com/Benny007-king/IPAM/releases/latest) and run it.
 
 - Installs IPAM as the Windows service **IPAM** — it starts with Windows and restarts itself on failure.
 - Asks which port to use (default **3000**) and can open it in Windows Firewall for other computers.
 - Then browse to **http://localhost:3000/** (or `http://<server>:<port>/`).
 - Data: `C:\ProgramData\IPAM` (database, connection settings, logs) — readable only by SYSTEM and Administrators.
-- Upgrade: run a newer setup over it; your data and port are kept.
 - Uninstall: *Apps & features → IPAM*. You are asked whether to keep the data.
-- Because IPAM runs on the machine itself, pings leave from the server's own address (unlike Docker Desktop).
+- Pings leave from the server's own address.
 
-No Node.js, IIS or anything else is needed — `ipam.exe` contains the runtime. The setup is not code-signed,
-so Windows SmartScreen may ask you to confirm (*More info → Run anyway*). Check the download against
-`SHA256SUMS` on the release page:
+Windows 10 / 11 or Windows Server 2016+, 64-bit. Nothing else is needed — `ipam.exe` contains its runtime.
+The setup is not code-signed, so Windows SmartScreen may ask you to confirm (*More info → Run anyway*).
+Check the download against `SHA256SUMS` on the release page:
 
 ```powershell
-Get-FileHash .\IPAM-Setup-1.1.0.exe -Algorithm SHA256
+Get-FileHash .\IPAM-Setup-1.2.0.exe -Algorithm SHA256
 ```
 
-**Portable:** `IPAM-<version>-win-x64-portable.zip` — unzip and double-click `ipam.exe`. It keeps its data in a
-`data` folder beside it and opens the browser. Set `PORT` to change the port.
+**Silent install:** `IPAM-Setup-1.2.0.exe /VERYSILENT /PORT=8080`
 
-**Silent install:** `IPAM-Setup-1.1.0.exe /VERYSILENT /PORT=8080`
+## Upgrade
 
-### Docker
+**From the app:** *Settings → Software & Upgrade* → choose the new `IPAM-Setup-x.y.z.exe` → **Upload and check** →
+**Install and restart**. The page follows the restart and reloads on the new version; you stay signed in.
 
-```bash
-docker compose up -d --build
-```
+Before anything changes, the file is checked: it must be an IPAM setup (by its Windows version information),
+not older than the running version (the same version repairs the install), and — when the server can reach
+GitHub — byte-for-byte the setup published with that release (its SHA-256 must be in the release's
+`SHA256SUMS`; a modified file is refused). The setup then runs outside the IPAM service, and a small watchdog
+starts the service again whatever the outcome. Its log is `C:\ProgramData\IPAM\upgrade\install.log`.
 
-You get a container named **`ipam`** on port 3000 with the database on the `ipam-data` volume. The compose file
-uses bridge networking, which works everywhere including Docker Desktop. Pings then leave through Docker's NAT,
-so devices see the Docker host rather than a direct sender; on a **Linux** host, `network_mode: host` (see the
-comments in `docker-compose.yml`) makes them come from the host's own address. On Windows, use the installer for that.
+**By hand:** run the newer setup on the server. Either way your data, port and firewall setting are kept.
 
-Plain `docker run`:
-
-```bash
-docker build -t ipam .
-docker run -d --name ipam -p 3000:3000 -e DB_PATH=/app/data/ipam.db -v ipam-data:/app/data ipam
-```
-
-### From source
+## Development
 
 Needs **Node.js 24**.
 
@@ -78,8 +68,6 @@ Needs **Node.js 24**.
 npm install
 npm run dev          # http://localhost:3000, with the Vite dev server
 ```
-
-Production: `npm run build`, then run `npx tsx server.ts` with `NODE_ENV=production`.
 
 ## First sign-in
 
@@ -125,7 +113,7 @@ All optional — environment variables or a `.env` file:
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3000` | Port the server listens on. |
-| `DATA_DIR` | working directory · `data\` beside `ipam.exe` · `C:\ProgramData\IPAM` (service) | Database file, `database.json`, session secret. |
+| `DATA_DIR` | `C:\ProgramData\IPAM` (installed) · the working directory (development) | Database file, `database.json`, session secret, upgrade files. |
 | `DB_PATH` | `<DATA_DIR>/ipam.db` | Location of the SQLite file. |
 | `DATABASE_URL` / `DB_*` | — | Pin an external database (see above). |
 | `JWT_SECRET` | random, saved as `<DATA_DIR>/.jwt-secret` | Session signing secret. Set only to share sessions between servers. |
@@ -151,8 +139,8 @@ Needs Windows, Node.js 24 and [Inno Setup 6](https://jrsoftware.org/isinfo.php).
 
 ```bash
 npm ci
-npm run build:exe                                   # release/ipam/ipam.exe + portable zip
-iscc /DAppVersion=1.1.0 installer\ipam.iss          # release/IPAM-Setup-1.1.0.exe
+npm run build:exe                                   # release/ipam/ipam.exe (+ SQLite engine, nssm)
+iscc /DAppVersion=1.2.0 installer\ipam.iss          # release/IPAM-Setup-1.2.0.exe
 ```
 
 `build:exe` bundles the server with esbuild, wraps it with Node in `ipam.exe` (`@yao-pkg/pkg`) and places the
@@ -160,7 +148,8 @@ SQLite engine (`better_sqlite3.node`) and `nssm.exe` (service wrapper, public do
 
 **Releases are automatic:** bump `version` in `package.json`, add a `CHANGELOG.md` entry, commit, and push a tag
 `vX.Y.Z`. [The workflow](.github/workflows/release.yml) builds the exe and installer, installs them on a clean Windows
-runner (service, sign-in, live ping, upgrade, uninstall), and publishes the release with `SHA256SUMS`.
+runner (service, sign-in, live ping, upgrade by setup and from the app, uninstall), and publishes the release
+with `SHA256SUMS`. A release ships one file: `IPAM-Setup-x.y.z.exe`.
 
 ## Project structure
 
@@ -169,13 +158,12 @@ server.ts                 Express API: auth, LDAP, segments/IPs, settings, healt
 db.ts                     Database layer (Knex): config, schema, switching + data copy
 paths.ts                  Data folder, version, packaged-exe detection
 pingService.ts            Background ping + offline notifications
-src/                      React UI (App.tsx, SettingsView.tsx, DatabaseSettings.tsx)
-scripts/build-exe.mjs     Builds ipam.exe and the portable zip
+upgrade.ts                Settings > Software & Upgrade: check an uploaded setup, run it outside the service
+src/                      React UI (App.tsx, SettingsView.tsx, SoftwareSettings.tsx, DatabaseSettings.tsx)
+scripts/build-exe.mjs     Builds ipam.exe (the installer wraps it)
 scripts/test-installer.ps1  Installer smoke test (CI only - installs a service)
 installer/ipam.iss        Inno Setup script; installer/nssm.exe service wrapper
 .github/workflows/        Release pipeline
-Dockerfile, docker-compose.yml
-web.config, *.bat         Older IIS reverse-proxy deployment (still works)
 ```
 
 ## License
