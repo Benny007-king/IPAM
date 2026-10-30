@@ -17,7 +17,8 @@ or **Microsoft SQL Server**. On Windows it installs as a service from a single s
 
 - **Segments** — define a network as `10.0.0.0/24` (or address + mask); every usable host address is created.
 - **IP inventory** — hostname, OS, description, live status and last-seen time per address.
-- **Live monitoring** — a background service pings every IP each minute (falling back to the hostname).
+- **Live monitoring** — a background service pings every IP each minute (falling back to the hostname);
+  **Refresh** on a segment pings it right away.
 - **Notifications** — an alert after 5 minutes offline, then daily; noisy IPs can be muted.
 - **Global search** — across segments, IPs, hostnames and OS.
 - **Export** — a segment's IPs to **XLSX** or **PDF**.

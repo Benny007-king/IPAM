@@ -3,6 +3,16 @@
 Versions follow `major.minor.patch`; each release is tagged `vX.Y.Z`.
 Pushing a tag builds, tests and publishes the Windows installer (see `.github/workflows/release.yml`).
 
+## [1.1.1] - 2026-10-30
+
+### Added
+- **Refresh** on a segment's page pings all its addresses right away instead of waiting for the next
+  minute's round. Segments of more than 1,024 addresses are checked in the background and the table fills in.
+
+### Fixed
+- After opening a segment, **Segments** in the sidebar did not return to the list of segments, so
+  *Add Segment* could not be reached. The open segment is now highlighted in the sidebar.
+
 ## [1.1.0] - 2026-10-30
 
 ### Added

@@ -25,7 +25,7 @@ import {
   testConnection,
   withStoredPassword,
 } from './db.js';
-import { startPingService } from './pingService.js';
+import { refreshSegment, startPingService } from './pingService.js';
 import { appRoot, appVersion, dataDir, isPackaged, writeFileAtomic } from './paths.js';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -440,6 +440,31 @@ async function startServer() {
     ah(async (req, res) => {
       await db('segments').where({ id: Number(req.params.id) }).del();
       res.json({ success: true });
+    }),
+  );
+
+  // Refresh: ping a segment's addresses now. Small segments answer when done;
+  // big ones (over 1,024 addresses) are checked in the background (202).
+  // Clicking again while one runs joins it instead of starting another.
+  const refreshJobs = new Map<number, Promise<number>>();
+  app.post(
+    '/api/segments/:id/refresh',
+    requireAuth,
+    ah(async (req, res) => {
+      const id = Number(req.params.id);
+      const segment = await db('segments').where({ id }).first('id');
+      if (!segment) throw new HttpError(404, 'Segment not found');
+      const addresses = Number((await db('ips').where({ segment_id: id }).count({ n: '*' }))[0].n);
+      let job = refreshJobs.get(id);
+      if (!job) {
+        job = refreshSegment(id).finally(() => refreshJobs.delete(id));
+        refreshJobs.set(id, job);
+      }
+      if (addresses > 1024) {
+        job.catch((e) => console.error(`Refresh of segment ${id} failed: ${explainDbError(e)}`));
+        return res.status(202).json({ background: true, addresses });
+      }
+      res.json({ checked: await job, at: nowIso() });
     }),
   );
 

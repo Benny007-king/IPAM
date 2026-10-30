@@ -3,7 +3,7 @@ import { User, Segment, IP, Notification } from './types';
 import { Button } from './components/ui/Button';
 import { formatDate } from './format';
 import { Input } from './components/ui/Input';
-import { Activity, Bell, LogOut, Network, Plus, Server, Trash2, Users, AlertTriangle, Edit2, X, Settings } from 'lucide-react';
+import { Activity, Bell, LogOut, Network, Plus, Server, Trash2, Users, AlertTriangle, Edit2, X, Settings, RefreshCw } from 'lucide-react';
 
 // Auth Context
 const AuthContext = createContext<{
@@ -278,6 +278,21 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
     }, 50);
   };
 
+  // "Segments" always goes back to the list of segments, also from inside one.
+  const showSegmentList = () => {
+    onNavigate('segments');
+    window.dispatchEvent(new CustomEvent('segments-home'));
+  };
+
+  // Which segment is open, so the sidebar can highlight it.
+  const [openSegmentId, setOpenSegmentId] = useState<number | null>(null);
+  useEffect(() => {
+    const onOpened = (e: any) => setOpenSegmentId(e.detail?.segmentId ?? null);
+    window.addEventListener('segment-opened', onOpened);
+    return () => window.removeEventListener('segment-opened', onOpened);
+  }, []);
+  const onList = currentView === 'segments' && openSegmentId === null;
+
   useEffect(() => {
     const fetchNotifs = () => {
       fetch('/api/notifications')
@@ -329,23 +344,27 @@ function Dashboard({ children, currentView, onNavigate }: { children: React.Reac
           <span className="text-lg font-bold">IPAM System</span>
         </div>
         <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-          <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('segments'); }} className={`flex items-center px-2 py-2 text-sm font-medium rounded-md ${currentView === 'segments' ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+          <a href="#" onClick={(e) => { e.preventDefault(); showSegmentList(); }} aria-current={onList ? 'page' : undefined} className={`flex items-center px-2 py-2 text-sm font-medium rounded-md ${onList ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
             <Server className="mr-3 h-5 w-5 text-slate-400" />
             Segments
           </a>
           {segments.length > 0 && (
             <div className="ml-4 mt-1 space-y-0.5 border-l border-slate-800 pl-2">
-              {segments.map(seg => (
-                <a
-                  key={seg.id}
-                  href="#"
-                  onClick={(e) => { e.preventDefault(); openSegment(seg.id); }}
-                  title={`${seg.network} / ${seg.subnet_mask}`}
-                  className="block px-2 py-1.5 text-sm rounded-md text-slate-400 hover:bg-slate-800 hover:text-white truncate"
-                >
-                  {seg.name}
-                </a>
-              ))}
+              {segments.map(seg => {
+                const active = currentView === 'segments' && openSegmentId === seg.id;
+                return (
+                  <a
+                    key={seg.id}
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); openSegment(seg.id); }}
+                    title={`${seg.network} / ${seg.subnet_mask}`}
+                    aria-current={active ? 'page' : undefined}
+                    className={`block px-2 py-1.5 text-sm rounded-md truncate ${active ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                  >
+                    {seg.name}
+                  </a>
+                );
+              })}
             </div>
           )}
         </nav>
@@ -476,6 +495,24 @@ function SegmentsView() {
     window.addEventListener('navigate-segment', handleNavigate);
     return () => window.removeEventListener('navigate-segment', handleNavigate);
   }, [segments]);
+
+  // The sidebar's "Segments" link: back to the list from inside a segment.
+  useEffect(() => {
+    const goHome = () => {
+      setSelectedSegment(null);
+      setTargetIpId(null);
+    };
+    window.addEventListener('segments-home', goHome);
+    return () => window.removeEventListener('segments-home', goHome);
+  }, []);
+
+  // Tell the sidebar which segment is open (none when this view goes away).
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('segment-opened', { detail: { segmentId: selectedSegment?.id ?? null } }));
+  }, [selectedSegment]);
+  useEffect(() => () => {
+    window.dispatchEvent(new CustomEvent('segment-opened', { detail: { segmentId: null } }));
+  }, []);
 
   const fetchSegments = () => {
     fetch('/api/segments')
@@ -680,13 +717,41 @@ function IPsView({ segment, onBack, targetIpId }: { segment: Segment, onBack: ()
   const [newIp, setNewIp] = useState({ ip_address: '', hostname: '', os: '', description: '' });
   const [error, setError] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNote, setRefreshNote] = useState<{ ok: boolean; text: string } | null>(null);
   const itemsPerPage = 100;
 
   useEffect(() => {
     fetchIps();
+    setRefreshNote(null);
     const interval = setInterval(fetchIps, 30000); // Refresh every 30s
     return () => clearInterval(interval);
   }, [segment.id]);
+
+  // Ping every address of this segment now instead of waiting for the next
+  // minute's round, then reload the table.
+  const refreshNow = async () => {
+    setRefreshing(true);
+    setRefreshNote(null);
+    try {
+      const res = await fetch(`/api/segments/${segment.id}/refresh`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 202) {
+        setRefreshNote({ ok: true, text: `Checking ${Number(data.addresses).toLocaleString()} addresses in the background - the table updates as results come in.` });
+        setTimeout(fetchIps, 10000);
+        setTimeout(fetchIps, 30000);
+      } else if (!res.ok) {
+        setRefreshNote({ ok: false, text: data.error || 'Refresh failed.' });
+      } else {
+        setRefreshNote({ ok: true, text: `Checked ${Number(data.checked).toLocaleString()} addresses at ${new Date().toLocaleTimeString()}.` });
+      }
+      fetchIps();
+    } catch {
+      setRefreshNote({ ok: false, text: 'Refresh failed - the server did not answer.' });
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     if (targetIpId && ips.length > 0) {
@@ -812,8 +877,15 @@ function IPsView({ segment, onBack, targetIpId }: { segment: Segment, onBack: ()
         <div>
           <h2 className="text-2xl font-bold text-gray-900">{segment.name}</h2>
           <p className="text-sm text-gray-500 font-mono mt-1">{segment.network} / {segment.subnet_mask}</p>
+          {refreshNote && (
+            <p role="status" className={`text-xs mt-1 ${refreshNote.ok ? 'text-gray-500' : 'text-red-600'}`}>{refreshNote.text}</p>
+          )}
         </div>
         <div className="flex space-x-3">
+          <Button variant="outline" className="cursor-pointer" onClick={refreshNow} disabled={refreshing} title="Ping every address in this segment now">
+            <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </Button>
           <Button className="cursor-pointer" onClick={() => {
             import('xlsx').then(XLSX => {
               const ws = XLSX.utils.json_to_sheet(ips.map(ip => ({
