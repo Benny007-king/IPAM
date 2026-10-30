@@ -99,3 +99,6 @@ Assert ($LASTEXITCODE -ne 0) 'firewall rule removed'
 Assert (Test-Path "$DataDir\ipam.db") 'data kept after a silent uninstall'
 
 Write-Host "`nInstaller test passed." -ForegroundColor Green
+# The last native command (netsh, expected to fail once the rule is gone) would
+# otherwise become the script's exit code.
+exit 0
