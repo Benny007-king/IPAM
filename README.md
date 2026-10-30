@@ -102,7 +102,8 @@ IPAM starts on a built-in SQLite file and can move to a database server at any t
 
 1. Create an empty database and a user that may create tables in it (IPAM creates its own tables).
 2. Enter server, port, database, user and password — or paste a connection URL — and pick the TLS mode:
-   *Off*, *On — verify the certificate*, or *On — accept any certificate* (self-signed / internal CA).
+   *Off*, *On — verify the certificate* (a public CA or one in the Windows certificate store), or
+   *On — accept any certificate* (self-signed). SQL Server needs SQL authentication and TCP/IP enabled.
 3. **Test connection** shows the server version and whether the database already holds IPAM data.
 4. **Switch database.** With *Copy my data* ticked, everything (segments, IPs, users, LDAP servers, AD groups)
    is copied first; the target must be empty. Untick it to use an IPAM database that already exists — or an

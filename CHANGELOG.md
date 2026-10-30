@@ -10,7 +10,10 @@ Pushing a tag builds, tests and publishes the Windows installer (see `.github/wo
   Settings → Database tests a connection and switches to it, and can copy everything across
   (segments, IPs, users, LDAP servers, AD groups). The previous database is left untouched, and a copy into a
   database that already holds IPAM data is refused. Also configurable with `DATABASE_URL` or `DB_CLIENT`/`DB_HOST`/…
-  (the UI then shows it read-only). TLS: off, verified, or any certificate; SQL Server named instances (`server\INSTANCE`).
+  (the UI then shows it read-only). TLS: off, verified, or any certificate — *verified* also trusts the CAs in the
+  Windows certificate store, so internal-CA servers work; SQL Server named instances (`server\INSTANCE`).
+  Tested on SQLite, PostgreSQL 16, MySQL 8.4 and SQL Server 2022: the full API suite on each, and copies in every
+  direction between them.
 - **Windows installer** (`IPAM-Setup-<version>.exe`): installs IPAM as the Windows service **IPAM** (starts with
   Windows, restarts on failure, rotating logs), asks for the port, adds an optional firewall rule, keeps data in
   `C:\ProgramData\IPAM` (SYSTEM and Administrators only) and upgrades in place. Running natively also means pings

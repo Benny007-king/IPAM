@@ -343,6 +343,21 @@ export function explainDbError(e: any): string {
   if (e instanceof DbError) return e.message;
   const code = e?.code || e?.errno;
   const msg = String(e?.message || e || 'Unknown error').replace(/\s+/g, ' ').trim();
+  if (/does not support SSL|server does not support secure|SSL connection is required|requires secure/i.test(msg)) {
+    return /required|requires/i.test(msg)
+      ? 'The server only accepts encrypted connections. Turn TLS on.'
+      : 'The server does not accept TLS connections. Set TLS to off.';
+  }
+  // Checked before socket errors: SQL Server reports certificate failures as ESOCKET too.
+  if (/self[- ]signed|certificate|unable to verify|CERT_|DEPTH_ZERO/i.test(msg)) {
+    const detail = String(e?.cause?.message || msg)
+      .replace(/;\s*if the root CA.*$/i, '')
+      .replace(/^Failed to connect to \S+ - /i, '');
+    return `The server's certificate was not accepted (${detail}). Trust its CA on this computer, or choose "On - accept any certificate".`;
+  }
+  // SQL Server answers every refused sign-in with the same "Login failed".
+  if (code === 'ELOGIN')
+    return 'SQL Server refused the sign-in: wrong user name or password, the database does not exist, or that login has no access to it.';
   if (code === 'ECONNREFUSED') return 'Connection refused: nothing is listening at that address and port.';
   // tedious (SQL Server) reports refused/unreachable sockets as ESOCKET.
   if (code === 'ESOCKET' || /Failed to connect to|Could not connect \(sequence\)/i.test(msg))
@@ -353,9 +368,6 @@ export function explainDbError(e: any): string {
     return 'The server refused the user name or password.';
   if (code === '3D000' || code === 'ER_BAD_DB_ERROR' || /cannot open database|does not exist|unknown database/i.test(msg))
     return 'That database does not exist on the server. Create it first (an empty database is enough).';
-  if (/self[- ]signed|certificate|SSL|TLS|unable to verify/i.test(msg))
-    return `TLS problem: ${msg}. If the server uses its own certificate, choose "TLS, any certificate".`;
-  if (/does not support SSL|server does not support secure/i.test(msg)) return 'The server does not accept TLS connections. Set TLS to off.';
   return msg.length > 300 ? `${msg.slice(0, 300)}…` : msg;
 }
 
@@ -683,8 +695,6 @@ async function copyAll(src: Knex, dst: Knex, dstClient: DbClient) {
       const columnCount = targetColumns.size;
       const batchSize = Math.max(1, Math.min(500, Math.floor(2000 / columnCount)));
 
-      if (dstClient === 'mssql') await trx.raw('SET IDENTITY_INSERT ?? ON', [table]);
-
       let lastId = 0;
       for (;;) {
         const rows = await src(table).where('id', '>', lastId).orderBy('id').limit(1000);
@@ -706,12 +716,21 @@ async function copyAll(src: Knex, dst: Knex, dstClient: DbClient) {
           kept[table].add(Number(row.id));
         }
         for (let i = 0; i < batch.length; i += batchSize) {
-          await trx(table).insert(batch.slice(i, i + batchSize));
+          const slice = batch.slice(i, i + batchSize);
+          if (dstClient === 'mssql') {
+            // Ids are copied as they are. SQL Server only allows that with
+            // IDENTITY_INSERT, and its drivers run each statement through
+            // sp_executesql, where a SET lasts only for that one batch, so the
+            // SET and the INSERT go in the same batch. (table: fixed list above)
+            const q = trx(table).insert(slice).toSQL();
+            await trx.raw(`SET IDENTITY_INSERT [${table}] ON; ${q.sql}; SET IDENTITY_INSERT [${table}] OFF;`, q.bindings as any);
+          } else {
+            await trx(table).insert(slice);
+          }
         }
         copied[table] += batch.length;
       }
 
-      if (dstClient === 'mssql') await trx.raw('SET IDENTITY_INSERT ?? OFF', [table]);
       if (dstClient === 'postgres') {
         // Explicit ids do not advance the sequence; move it past the copied rows.
         await trx.raw(`select setval(pg_get_serial_sequence(?, 'id'), coalesce((select max(id) from ??), 0) + 1, false)`, [table, table]);

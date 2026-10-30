@@ -1,5 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import tls from 'node:tls';
+
+// "Verify the certificate" should accept what this computer trusts — e.g. an
+// internal CA in the Windows certificate store — not only Node's bundled list.
+// Applies to every TLS client created afterwards (database drivers, LDAP).
+try {
+  const t = tls as any;
+  if (typeof t.getCACertificates === 'function' && typeof t.setDefaultCACertificates === 'function') {
+    t.setDefaultCACertificates([...new Set([...t.getCACertificates('default'), ...t.getCACertificates('system')])]);
+  }
+} catch {
+  /* older Node: bundled CAs only */
+}
 
 // Set by esbuild when the server is bundled for the Windows executable.
 declare const __BUNDLED__: boolean | undefined;
