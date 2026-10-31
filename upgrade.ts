@@ -234,6 +234,8 @@ export async function installPending(username: string) {
       'Start-Sleep -Seconds 3',
       '$svc = Get-Service -Name IPAM -ErrorAction SilentlyContinue',
       "if ($svc -and $svc.Status -ne 'Running') { Start-Service -Name IPAM -ErrorAction SilentlyContinue }",
+      '# The setup file is not needed any more (upload it again to retry).',
+      'Remove-Item -LiteralPath $setup, (Join-Path $dir \'pending.json\') -Force -ErrorAction SilentlyContinue',
       "$json = @{ exitCode = $code; finishedAt = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json -Compress",
       "[IO.File]::WriteAllText((Join-Path $dir 'result.json'), $json)",
       '',

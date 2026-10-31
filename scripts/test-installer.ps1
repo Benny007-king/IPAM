@@ -108,16 +108,18 @@ try {
 }
 if ($uploaded) {
   Assert ($uploaded.version -eq $sys.version -and $uploaded.reinstall) "the uploaded setup is checked (IPAM $($uploaded.version), $($uploaded.verification))"
+  $pidBefore = (Get-CimInstance Win32_Process -Filter "Name='ipam.exe'" | Select-Object -First 1).ProcessId
   $r = Invoke-WebRequest "$Base/api/system/upgrade/install" -Method Post -WebSession $s -UseBasicParsing
   Assert ($r.StatusCode -eq 202) 'install started'
-  $deadline = (Get-Date).AddMinutes(6); $state = ''; $sawDown = $false
+  $deadline = (Get-Date).AddMinutes(6); $state = ''
   do {
     Start-Sleep 3
-    try { $state = (Invoke-RestMethod "$Base/api/system" -WebSession $s -TimeoutSec 5).upgrade.state } catch { $sawDown = $true; $state = 'restarting' }
+    try { $state = (Invoke-RestMethod "$Base/api/system" -WebSession $s -TimeoutSec 5).upgrade.state } catch { $state = 'restarting' }
   } while ($state -notin @('done', 'failed') -and (Get-Date) -lt $deadline)
   if ($state -ne 'done' -and (Test-Path "$DataDir\upgrade\install.log")) { Get-Content "$DataDir\upgrade\install.log" -Tail 30 | Write-Host }
   Assert ($state -eq 'done') "the setup ran outside the service and IPAM came back (state: $state)"
-  Assert $sawDown 'the service really restarted'
+  $pidAfter = (Get-CimInstance Win32_Process -Filter "Name='ipam.exe'" | Select-Object -First 1).ProcessId
+  Assert ($pidBefore -and $pidAfter -and $pidBefore -ne $pidAfter) "the service really restarted (ipam.exe $pidBefore -> $pidAfter)"
   Assert ((Get-Service IPAM).Status -eq 'Running') 'service running after the upgrade from the app'
   $after = Get-List '/api/segments' $s
   Assert (($after | Where-Object { $_.name -eq 'Loopback' } | Measure-Object).Count -eq 1) 'data kept across the upgrade from the app'
